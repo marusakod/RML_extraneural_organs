@@ -1,0 +1,382 @@
+---
+title: "Mouse extraneural organs pca and deseq2"
+author: "Marusa Koderman"
+date: '2023-07-30'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggpubr)
+library(gridExtra)
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r helpers}
+source('code/functions.R')
+```
+
+```{r inputs, echo=FALSE}
+organs <- c('blood', 'muscle', 'spleen')
+
+# metadata files
+all_samples_info <- read.xlsx("data/metadata/all_samples_info.xlsx")
+all_samples_info$wpi <- paste(all_samples_info$wpi, 'wpi')
+all_samples_info$wpi <- gsub("term wpi", 'terminal', all_samples_info$wpi) %>%
+  factor(., levels = c('4 wpi', '8 wpi', '12 wpi', '14 wpi', '16 wpi', '18 wpi', '20 wpi','terminal')) 
+
+all_samples_info <- all_samples_info %>% mutate(stage = case_when(wpi %in% c('4 wpi', '8 wpi') ~ 'early', 
+                                                                  wpi %in% c('12 wpi', '14 wpi', '16 wpi') ~ 'presymptomatic', 
+                                                                  TRUE ~ 'symptomatic'))
+
+all_samples_info$stage <- factor(all_samples_info$stage, levels = c('early', 'presymptomatic', 'symptomatic'))
+
+
+all_samples_info_split <- all_samples_info %>% group_by(Region) %>% 
+  group_split() %>%
+  setNames(organs) %>%
+  lapply(., function(x){
+    x <- x %>% as.data.frame()
+    rownames(x) <- x$SampleID
+    x
+    })
+
+
+
+Fcounts_main_dir <- 'data/FeatureCounts'
+```
+
+```{r outputs}
+out_dir <- 'output/mouse_pca_and_deseq2'
+# plots
+merged_pca_plots_file <- file.path(out_dir, 'mouse_merged_pca_plots.svg')
+pca_rml_time_legend_file <- file.path(out_dir, 'mouse_merged_pca_plots_RML_time_legend.svg')
+pca_nbh_time_legend_file <- file.path(out_dir, 'mouse_merged_pca_plots_NBH_time_legend.svg')
+pca_shape_legend_file <- file.path(out_dir, 'mouse_merged_pca_plots_shape_legend.svg')
+
+deseq2_dotplot_file <- file.path(out_dir, 'mouse_per_timepoint_deseq2_dotplot.svg')
+
+
+# deseq2 results
+full_deseq2_results_file <- file.path(out_dir, 'mouse_tp_organ_split_deseq2.rds')
+```
+
+
+```{r get feature counts}
+all_FC_counts_list <- mapply(organ = c('blood', 'muscle_batch1', 'spleen'),
+                             meta = all_samples_info_split,
+                             FUN= get_feature_counts,
+                             MoreArgs= list(counts_dir = Fcounts_main_dir,
+                                            file_prefix = '', 
+                             overwrite = FALSE),
+                             SIMPLIFY = FALSE)%>%
+  setNames(organs)
+
+```
+
+## per organ PCA plots 
+```{r make_pca_plots}
+# make pca plots split per organ
+pcas <- lapply(all_FC_counts_list, FUN = do_pca)
+pca_dfs <- mapply(all_samples_info_split, pcas,FUN = get_pca_meta_df, SIMPLIFY = FALSE) %>%
+  lapply(., function(x){
+   x <- x %>% mutate(Treatment_wpi = paste(Treatment, gsub(' ', '_', wpi), sep = '.')) %>%
+           mutate(Treatment_stage = paste(Treatment, stage, sep = '_'))
+   
+   x$Treatment_stage <- factor(x$Treatment_stage,
+                               levels = paste(rep(c('NBH', 'RML6'), each = 3),
+                                              c('early', 'presymptomatic','symptomatic'), sep = '_'))
+   
+   x
+}) 
+
+
+pca_plots <- vector("list", length = 3) %>% setNames(organs)
+for(i in organs){
+  
+  pca_plots[[i]] <- make_pca_plot2(pca_dfs[[i]], 
+                          sample_label = FALSE, 
+                          proportional_axes = TRUE) 
+}
+
+```
+
+
+```{r mouse_deseq2_interaction}
+all_deseq2_interaction <- vector("list", length = 3) %>%
+  setNames(organs)
+for(i in organs){
+  counts <- all_FC_counts_list[[i]]
+  meta <- all_samples_info_split[[i]]
+  
+ all_deseq2_interaction[[i]] <- run_deseq2(counts = counts, 
+                                           meta = meta, 
+                                          ctrl_level = 'NBH', 
+                                          main_var = 'Treatment', 
+                                          formula = ~stage + Treatment)
+  
+  print(paste0('Finished stage deseq2 for ',i))
+}
+
+# get nice outputs
+all_deseq2_interaction_nice <- mapply(dds = all_deseq2_interaction,
+                                  fname_prefix = paste0(organs, '_interaction'), 
+                                  FUN = get_nice_df_from_dds, 
+                                  MoreArgs = list(
+                                  AnnDb_object = org.Mm.eg.db, 
+                                  meta_vars_to_add = 'Region',  
+                                  mart_dataset = 'mmusculus_gene_ensembl', 
+                                  out_dir = out_dir, overwrite = FALSE), SIMPLIFY = FALSE)
+
+```
+
+```{r interaction_volcanos}
+
+all_deseq2_interaction_nice_merged <- bind_rows(all_deseq2_interaction_nice)
+
+volcano_plot_mouse_interaction <- ggplot(data = all_deseq2_interaction_nice_merged, aes(x = log2FoldChange, y = -log10(padj)))+
+  theme_light() +
+  facet_wrap(~Region, scales = 'free', ncol = 1) +
+  geom_point(aes(colour = gene_type),
+             alpha = 0.7,
+             shape = 16,
+             size = 1) +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed",
+             color = "#575757",
+             linewidth = 0.1) +
+  geom_vline(xintercept = c(-0.5, 0.5),
+             linetype = "dashed",
+             color = "#575757",
+             linewidth = 0.1) +
+  scale_colour_manual(values =  c("Upregulated" = "#f2968d", "Downregulated" = "#71b7e6", "Nonsignificant" = "lightgrey")) +
+  guides(colour = guide_legend(override.aes = list(size= 4))) +
+  labs(x = expression("Log"[2]*" Fold Change"),
+       y = bquote(-Log[10]*.("FDR")),
+       colour = NULL) +
+  
+  theme(legend.text = element_text(size = 8),
+        axis.title = element_text(size = 9),
+        axis.text = element_text(size = 8),
+        strip.text = element_text(size = 9, color = 'black'), 
+        strip.background = element_rect(color = 'grey', fill = 'white'), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom",
+        legend.direction = "horizontal") 
+
+
+
+```
+
+
+
+```{r mouse_deseq2_per_tp}
+# run deseq2 for all organs and timepoint
+
+# prepare metadata
+all_samples_info_tp_organ_split <- all_samples_info %>% group_by(Region, wpi) %>% 
+  group_split() %>%
+  setNames(lapply(., function(x) gsub(' ', '-', paste(unique(x$wpi), unique(x$Region), sep = '_')))) %>%
+  # add rownames
+  lapply(., function(x){
+    rownames(x) <- x$SampleID
+    return(x)})
+  
+
+# prepare counts
+all_counts_tp_organ_split <- mapply(meta = all_samples_info_tp_organ_split, 
+                                    organ = str_after_first(names(all_samples_info_tp_organ_split), pattern = '_'),
+                           FUN = extract_group_counts, 
+                           SIMPLIFY = FALSE)
+
+# get deseqs - different formula for spleen
+all_deseqs_tp_organ_split <- vector("list", length  = length(all_counts_tp_organ_split))
+
+for(i in 1:length(all_deseqs_tp_organ_split)){
+  organ <- str_after_first(names(all_samples_info_tp_organ_split)[i], pattern = '_')
+  counts <- all_counts_tp_organ_split[[i]]
+  meta <- all_samples_info_tp_organ_split[[i]]
+  if(length(unique(meta$batch)) == 1){
+    Form = ~ Treatment
+  }else{
+    Form = ~batch + Treatment
+  }
+  
+  all_deseqs_tp_organ_split[[i]] <- run_deseq2(counts = counts, 
+                                               meta = meta, 
+                                               ctrl_level = 'NBH', 
+                                               main_var = 'Treatment', 
+                                               formula = Form)
+  
+  print(paste0('Finished for ', names(all_samples_info_tp_organ_split)[i]))
+}
+
+# get nice outputs
+
+all_deseq2_tp_organ_split_nice <- mcmapply(dds = all_deseqs_tp_organ_split,
+                                  fname_prefix = names(all_counts_tp_organ_split), 
+                                  FUN = get_nice_df_from_dds, 
+                                  MoreArgs = list(
+                                  AnnDb_object = org.Mm.eg.db, 
+                                  meta_vars_to_add = c('wpi', 'Region', 'stage'), 
+                                  mart_dataset = 'mmusculus_gene_ensembl', 
+                                  out_dir = out_dir, overwrite = FALSE), SIMPLIFY = FALSE, mc.cores = 4) %>%
+  setNames(names(all_counts_tp_organ_split))
+
+# get genes expressed in all timepoints for each organ
+all_common_genes <- organs %>%
+  lapply(., function(x){
+  all_deseq2_tp_organ_split_nice[grepl(x, names(all_deseq2_tp_organ_split_nice))] %>%
+      common_genes()
+  }) %>%
+  setNames(organs)
+
+
+# merge deseq2 results for each organ 
+
+all_deseq2_tp_organ_merged <- organs %>%
+  lapply(., function(x){
+  m <- bind_rows(all_deseq2_tp_organ_split_nice[grepl(x, names(all_deseq2_tp_organ_split_nice))]) %>%
+                   mutate(common_gene = case_when(ensembl_gene_id %in% all_common_genes[[x]] ~ TRUE, 
+                                                  TRUE ~FALSE))
+  }) %>%
+  setNames(organs)
+```
+
+
+```{r make_dotplot}
+
+all_organs <- bind_rows(all_deseq2_tp_organ_merged) %>%
+  mutate(direction = case_when(padj < 0.05 & log2FoldChange >0.5 ~"Upregulated", 
+                               padj < 0.05 & log2FoldChange < -0.5 ~"Downregulated",
+                               TRUE~"Non-significant")) %>%
+  mutate(pcat = case_when(pvalue < 10^-8 ~ '10^-8',
+                                            pvalue >10^-8 & pvalue <10^-7  ~ "10^-8-10^-7",
+                                            pvalue >10^-7 & pvalue <10^-5 ~ "10^-7-10^-5",
+                                            pvalue >10^-5 & pvalue <10^-3 ~ "10^-5-10^-3",
+                                            pvalue >10^-3 & pvalue <0.05 ~ "10^-3-0.05",
+                                            TRUE ~ "0.05-1")) %>%
+   mutate(pcat2 = case_when(log2FoldChange > 0 ~ pcat, 
+                                              TRUE ~ paste("-", pcat)))
+
+all_organs$direction <- factor(all_organs$direction, levels = c("Upregulated", "Downregulated", "Non-significant"))
+
+# reorder timepoints so that earlies timepoint will be on top of the y axis
+
+all_organs$wpi <- factor(all_organs$wpi, levels = rev(levels(all_organs$wpi)))
+
+# order of organs in the plot should be blood, spleen, muscle
+all_organs$Region <- factor(all_organs$Region, levels = c('blood', 'spleen', 'muscle'))
+
+
+
+reds <- c('#FADBD8', '#F1948A', '#E74C3C', '#B03A2E', '#7B241C') #'#641E16'
+blues <- c('#EBF5FB', '#AED6F1'  , '#5DADE2', '#2E86C1', '#2874A6') #, '#1B4F72')
+
+breaks <- c("10^-3-0.05", "10^-5-10^-3",  "10^-7-10^-5", "10^-8-10^-7", "10^-8", 
+            "- 10^-3-0.05", "- 10^-5-10^-3",  "- 10^-7-10^-5", "- 10^-8-10^-7", "- 10^-8")
+
+plot_breaks <- data.frame(start = c(-Inf, -10.5, 10.5), 
+                          end = c(-10.5, 10.5, Inf), 
+                          colors = factor(1:3))
+
+all_organs1 <- all_organs %>% filter(pcat == "10^-3-0.05")
+all_organs2 <- all_organs %>% filter(pcat == "10^-5-10^-3")
+all_organs3 <- all_organs %>% filter(pcat == "10^-7-10^-5")
+all_organs4 <- all_organs %>% filter(pcat == "10^-8-10^-7")
+all_organs5 <- all_organs %>% filter(pcat == "10^-8")
+
+
+# get deg numbers
+# all_deg_cats <- paste(rep(organs, each = 16),  
+#                       rep(levels(all_organs$wpi), 6), 
+#                       rep(c('Upregulated', 'Downregulated'), 24))
+  
+
+deg_nums <- all_organs %>% group_by(Region, wpi, direction) %>% 
+  summarise(n = n()) %>%
+  filter(direction != 'Non-significant') %>%
+  # add position of text in the plot
+  mutate(x_pos = case_when(direction == 'Upregulated' ~ 12, 
+                           TRUE ~ -12)) %>%
+  mutate(y_pos = case_when(wpi == 'terminal' ~ 1, 
+                           wpi == '20 wpi' ~ 2, 
+                           wpi == '18 wpi' ~ 3,
+                           wpi == '16 wpi' ~ 4, 
+                           wpi == '14 wpi' ~ 5, 
+                           wpi == '12 wpi' ~ 6, 
+                           wpi == '8 wpi' ~ 7, 
+                           wpi == '4 wpi' ~ 8)) 
+
+deseq_dotplot <- ggplot() +
+      theme_light() +
+  geom_rect(data = plot_breaks,
+            aes(xmin = -Inf,
+                xmax = Inf,
+                ymin = start,
+                ymax = end,
+                fill = colors), alpha = 1) +
+  
+  scale_fill_manual(values = c("#AED6F1", "white", "#F5B7B1"), breaks = c(1, 2, 3)) +
+  
+  geom_jitter(data = all_organs1 %>% filter(pvalue < 0.05), 
+             aes(x = wpi, y = log2FoldChange, color = pcat2), 
+             size = 0.5, alpha = 0.7) +
+  geom_jitter(data = all_organs2 %>% filter(pvalue < 0.05), 
+              aes(x = wpi, y = log2FoldChange, color = pcat2), 
+              size = 0.5, alpha = 0.7) +
+  geom_jitter() +
+  geom_jitter(data = all_organs3 %>% filter(pvalue < 0.05), 
+              aes(x = wpi, y = log2FoldChange, color = pcat2), 
+              size = 0.5, alpha = 0.7) +
+  geom_jitter() +
+  geom_jitter(data = all_organs4 %>% filter(pvalue < 0.05), 
+              aes(x = wpi, y = log2FoldChange, color = pcat2), 
+              size = 0.5, alpha = 0.7) +
+  geom_jitter() +
+  geom_jitter(data = all_organs5 %>% filter(pvalue < 0.05), 
+              aes(x = wpi, y = log2FoldChange, color = pcat2), 
+              size = 0.5, alpha = 0.7) +
+  geom_jitter()+
+  geom_text(data = deg_nums, mapping = aes(x = y_pos, y = x_pos, label = n), size = 3) +
+  labs(x = NULL, y = expression("Log"[2]*" Fold Change")) +
+  facet_wrap(~Region, scales = "free_x", ncol = 1) +
+  scale_color_manual(values = c(reds, blues), breaks = breaks) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 0.3) +
+  theme(panel.grid.major = element_blank(), 
+        legend.position = "none", 
+        panel.grid.minor = element_blank(), 
+        axis.text.y = element_text(size = 9), 
+        axis.title.x = element_text(size = 9), 
+        panel.spacing = unit(0.3, "lines"), 
+        axis.text.x = element_text(size = 8), 
+        strip.background = element_rect(fill = "white"), 
+        strip.text = element_text(color = "black", size = 10, face = "bold.italic")) +
+   # scale_alpha_manual(values = c(1, 0.8, 0.7, 0.6, 0.5),
+   #                   breaks = rev(c("10^-3-0.05", "10^-5-10^-3",  "10^-7-10^-5", "10^-8-10^-7", "10^-8"))) +
+  geom_vline(xintercept = c(1.5, 2.5, 3.5, 4.5,5.5,6.5,7.5), linewidth = 0.05) +
+  scale_y_continuous(limits = c(-12, 12), 
+                     breaks = c(-10, -5, 0, 5, 10)) +
+  coord_flip()
+
+```
+
+```{r export_plots}
+
+# PCA plots and legends
+ggsave(pca_plots_combined, merged_pca_plots_file)
+ggsave(timepoint_RML_legend, pca_rml_time_legend_file)
+ggsave(timepoint_RML_legend. pca_nbh_time_legend_file)
+ggsave(pca_shape_legend, pca_shape_legend_file)
+ggsave(deseq2_dotplot, deseq2_dotplot_file, width = 5, height = 8)
+
+```
+
+```{r export files}
+
+saveRDS(all_deseq2_tp_organ_merged, full_deseq2_results_file)
+
+```
+
+
+
