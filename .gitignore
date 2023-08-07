@@ -11,9 +11,8 @@ analysis/*_cache
 analysis/site_libs
 /*.png
 /*.pdf
-data/
-output/
+output/*.svg
 .log/
 .tmp/
 ._*
-
+.deprecated/
