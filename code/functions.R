@@ -200,13 +200,18 @@ get_pca_meta_df <- function(meta,pca){
 
 get_top_loadings <- function(pca, feature_data){
   # first component
-  pc1 <- sort(abs(pca$rotation[, 1]), decreasing = TRUE)[1:20]
-  pc2 <- sort(abs(pca$rotation[, 2]), decreasing = TRUE)[1:20]
-  top_genes <- unique(names(c(pc1, pc2)))
+  pc1 <- names(sort(abs(pca$rotation[, 1]), decreasing = TRUE)[1:50])
+  pc2 <- names(sort(abs(pca$rotation[, 2]), decreasing = TRUE)[1:50])
+
+  pc1u <- setdiff(pc1, pc2)
+  pc2u <- setdiff(pc2, pc1)
+  both <- intersect(pc1, pc2)
+
+  top_genes <- c(pc1u,pc2u,both)
 
   top <- pca$rotation[top_genes, 1:2] %>%
     as.data.frame() %>%
-    mutate(pc = rep(c('PC1', 'PC2'), each = 20)) %>%
+    mutate(pc = c(rep('PC1', length(pc1u)), rep('PC2', length(pc2u)), rep('PC1_PC2', length(both)))) %>%
     rownames_to_column('ensembl_gene_id') %>%
     merge(., feature_data, by = 'ensembl_gene_id', all.x = TRUE, all.y = FALSE) %>%
     arrange(pc)
