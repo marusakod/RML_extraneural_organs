@@ -45,6 +45,47 @@ get_feature_counts <- function(counts_dir, organ,meta, file_prefix, overwrite = 
 }
 
 
+# find gene symbols and biotypes for all ensembl ids
+
+get_feature_data <- function(ensembl_vec, symbols, mart_dataset, species, out_dir, overwrite = FALSE){
+
+  f <- file.path(out_dir, paste0(species, '_feature_data.rds'))
+
+  if(file.exists(f) & overwrite == FALSE){
+    readRDS(f)
+  }else{
+
+  df <- data.frame(ensembl_gene_id = ensembl_vec)
+  #
+  mart <- useMart('ensembl', dataset = mart_dataset)
+  genes_and_biotypes <- getBM(filters = 'ensembl_gene_id',
+                              attributes = c('ensembl_gene_id', 'gene_biotype', symbols),
+                              values = ensembl_vec, mart = mart)
+
+  res <- merge(df, genes_and_biotypes, by = 'ensembl_gene_id', all.x = TRUE) %>%
+    dplyr::rename(gene_symbol = mgi_symbol) %>%
+    group_by(ensembl_gene_id, gene_biotype) %>%
+    dplyr::slice_head() %>%
+    ungroup() %>%
+    as.data.frame() %>%
+    # add broad biotype categories
+    mutate(gene_biotype_broad = case_when(str_detect(gene_symbol, '^mt-') ~ 'Mitochondrial RNA',
+                                          str_detect(gene_biotype , '^IG_') ~ 'IG gene',
+                                          str_detect(gene_biotype, '^TR_') ~ 'TR gene',
+                                          str_detect(gene_biotype, 'pseudogene') ~ 'Pseudogene',
+                                          str_detect(gene_biotype, 'misc_RNA|miRNA|snRNA|snoRNA|rRNA|scRNA|scaRNA') ~ 'Non-coding RNA',
+                                          str_detect(gene_biotype, 'lncRNA') ~ 'Long non-coding RNA',
+                                          str_detect(gene_biotype, 'protein_coding') ~ 'Protein-coding',
+                                          TRUE ~ 'other'))
+
+  rownames(res) <- res$ensembl_gene_id
+  res <- res[ensembl_vec, ]
+  saveRDS(res, f)
+  return(res)
+  }
+}
+
+
 # get counts in metadata
 
 extract_group_counts <- function(organ, meta){
@@ -53,9 +94,82 @@ extract_group_counts <- function(organ, meta){
   sub <- all_c[, meta$SampleID]
 
   sub
+}
+
+
+
+
+# add qc metrics to metadata
+
+add_qc <- function(meta, counts, organ, feature_meta, file_prefix, out_dir, overwrite = FALSE){
+
+  f <- file.path(out_dir, paste(file_prefix, organ, 'metadata_w_qc.rds', sep = '_'))
+
+  if(file.exists(f) & overwrite == FALSE){
+
+    readRDS(f)
+  }else{
+  assert("Rownamws of metadata and column names of counts don't match",
+         identical(rownames(meta), colnames(counts)))
+
+  # get library size and the number of genes detected
+  meta$lib_size <- Matrix::colSums(counts)
+  meta$feature_counts <- Matrix::colSums(counts > 0)
+
+  # get pecentages of different biotypes
+  biotype_counts <- sapply(unique(feature_meta$gene_biotype_broad),
+                           FUN = get_pct_per_biotype,
+                feature_data = feature_meta,
+                counts = counts)
+
+  final <- cbind(meta, biotype_counts)
+  saveRDS(final, f)
+  return(final)
+  }
+
 
 }
 
+
+
+get_pct_per_biotype <- function(biotype, feature_data, counts){
+  biotype_ensembls <- feature_data %>% filter(gene_biotype_broad == biotype) %>%
+    pull(ensembl_gene_id)
+
+  biotype_counts <- counts[biotype_ensembls, ]
+  biotype_percent <- Matrix::colSums(biotype_counts)
+  biotype_percent
+}
+
+
+# make percent barplot for biotypes
+make_pct_biotype_bar <- function(meta_qc, feature_data){
+  bios <- unique(feature_data$gene_biotype_broad)
+  df <- meta_qc %>% dplyr::select(all_of(c('SampleID', bios))) %>%
+    reshape2::melt()
+
+  ggplot(df, aes(fill=variable, y=value, x=SampleID)) +
+    geom_bar(position="fill", stat="identity") +
+    theme_light() +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    labs(x = NULL, y ='% total', fill = 'Biotype')
+
+}
+
+
+get_library_complexity <- function(counts, meta, cols_to_add){ # from #RNAseqQC package
+
+ lib_comp <- lapply(1: ncol(counts), FUN=function(x) {
+    cts <- sort(counts[, x], decreasing=T)
+    tibble(
+      sample_id = SummarizedExperiment::colnames(counts)[x],
+      fraction_of_counts = cumsum(cts)/sum(cts),
+      fraction_of_genes = (1:length(cts))/length(cts)
+    )
+  })
+}
 
 
 
@@ -79,6 +193,79 @@ get_pca_meta_df <- function(meta,pca){
   pc_df$PC1_var <- vars[1]
   pc_df$PC2_var <- vars[2]
   pc_df
+}
+
+
+# get top 20 PC1 and PC2 loadings
+
+get_top_loadings <- function(pca, feature_data){
+  # first component
+  pc1 <- sort(abs(pca$rotation[, 1]), decreasing = TRUE)[1:20]
+  pc2 <- sort(abs(pca$rotation[, 2]), decreasing = TRUE)[1:20]
+  top_genes <- unique(names(c(pc1, pc2)))
+
+  top <- pca$rotation[top_genes, 1:2] %>%
+    as.data.frame() %>%
+    mutate(pc = rep(c('PC1', 'PC2'), each = 20)) %>%
+    rownames_to_column('ensembl_gene_id') %>%
+    merge(., feature_data, by = 'ensembl_gene_id', all.x = TRUE, all.y = FALSE) %>%
+    arrange(pc)
+
+  return(top)
+
+}
+
+# it might work if I use df.u for plotting the parent ggplot instead of oroginal PCs
+
+get_top_loadings2 <- function(pcobj, feature_data){
+  nobs.factor <- sqrt(nrow(pcobj$x) - 1)
+  d <- pcobj$sdev
+  u <- sweep(pcobj$x, 2, 1 / (d * nobs.factor), FUN = '*')
+  v <- pcobj$rotation
+
+  choices = 1:2
+  scale = 1
+  obs.scale = 1 -scale
+  var.scale = scale
+  circle = FALSE
+  circle.prob = 0.69
+  pc.biplot = TRUE
+
+  # Scores
+  choices <- pmin(choices, ncol(u))
+  df.u <- as.data.frame(sweep(u[,choices], 2, d[choices]^obs.scale, FUN='*'))
+
+  # Directions
+  v <- sweep(v, 2, d^var.scale, FUN='*')
+  df.v <- as.data.frame(v[, choices])
+
+  names(df.u) <- c('xvar', 'yvar')
+  names(df.v) <- names(df.u)
+
+  if(pc.biplot) {
+    df.u <- df.u * nobs.factor
+  }
+
+  # Scale the radius of the correlation circle so that it corresponds to
+  # a data ellipse for the standardized PC scores
+  r <- sqrt(qchisq(circle.prob, df = 2)) * prod(colMeans(df.u^2))^(1/4)
+
+  # Scale directions
+  v.scale <- rowSums(v^2)
+  df.v <- r * df.v / sqrt(max(v.scale))
+  colnames(df.v) <- c('PC1', 'PC2')
+  df.v <- as.matrix(df.v)
+
+  pc1 <- sort(abs(df.v[, 1]), decreasing = TRUE)[1:20]
+  pc2 <- sort(abs(df.v[, 2]), decreasing = TRUE)[1:20]
+  top_genes <- unique(names(c(pc1, pc2)))
+
+  top <- df.v[top_genes, 1:2] %>%
+    as.data.frame() %>%
+    rownames_to_column('ensembl_gene_id') %>%
+    merge(., feature_data, by = 'ensembl_gene_id', all.x = TRUE, all.y = FALSE)
+
+  return(top)
 }
 
 # function for making a pca plot for mouse organs
@@ -130,8 +317,10 @@ make_pca_plot2 <- function(pca_df,
                            proportional_axes = FALSE,
                           sample_label = FALSE){
 
+
+
   p <- ggplot(data = pca_df, aes(x =PC1, y = PC2, fill = Treatment_stage)) +
-    geom_point(shape = 21, size = 3) +
+    geom_point(shape = 21) +
     xlab(paste("PC1: ", unique(pca_df$PC1_var), "% variance", sep="")) +
     ylab(paste("PC2: ", unique(pca_df$PC2_var), "% variance", sep="")) +
     theme_light() +
@@ -147,7 +336,13 @@ make_pca_plot2 <- function(pca_df,
           strip.text = element_text(size = 9, color = 'black')) +
     # scale_color_manual(values = c('#B03A2E', '#2874A6'), breaks = c('RML6', 'NBH')) +
     scale_fill_manual(values = c('#FADBD8', '#E74C3C', '#943126',
-                                 '#D6EAF8', '#3498DB', '#1F618D'))
+                                 '#D6EAF8', '#3498DB', '#1F618D')) +
+    # geom_vline(xintercept = 0, linetype = 'dashed', linewidth = 0.5, color = 'lightgrey')
+    # geom_hline(yintercept = 0, linetype = 'dashed', linewidth = 0.5, color = 'lightgrey')
+    # geom_segment(data =loadings_df, mapping = aes(x = 0, xend = PC1, y = 0, yend = PC2), color ='black',
+    #              inherit.aes = FALSE)
+    #
+
 
   if(proportional_axes == TRUE){
 
@@ -156,7 +351,7 @@ make_pca_plot2 <- function(pca_df,
 
 
   if(sample_label == TRUE){
-    p <- p + ggrepel::geom_text_repel(aes(label = wpi), size = 2, max.overlaps = Inf)
+    p <- p + ggrepel::geom_text_repel(aes(label = wpi), size = 3, max.overlaps = Inf)
   }
 
   p

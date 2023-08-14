@@ -16,6 +16,7 @@ source('code/functions.R')
 ```
 
 ```{r inputs, echo=FALSE}
+
 organs <- c('blood', 'muscle', 'spleen')
 
 # metadata files
@@ -68,16 +69,88 @@ all_FC_counts_list <- mapply(organ = c('blood', 'muscle_batch1', 'spleen'),
                              MoreArgs= list(counts_dir = Fcounts_main_dir,
                                             file_prefix = '', 
                              overwrite = FALSE),
-                             SIMPLIFY = FALSE)%>%
+                             SIMPLIFY = FALSE) %>%
   setNames(organs)
 
+# get feature data
+
+mouse_feature_meta <- get_feature_data(rownames(all_FC_counts_list[[1]]), 
+                                       symbols = 'mgi_symbol', 
+                                       mart_dataset = 'mmusculus_gene_ensembl', 
+                                       species= 'mouse', 
+                                       out_dir = 'data/metadata', 
+                                       overwrite = FALSE)
+
 ```
+
+
+```{r get_qc_metrics}
+
+# all_lib_complexity <- lapply(all_FC_counts_list,
+#                              FUN = get_library_complexity)
+# 
+# lib_complexity_plots <- lapply(all_lib_complexity, FUN = function(x){
+#   
+#   ggplot(bind_rows(x), aes(fraction_of_genes, fraction_of_counts, group = sample_id, label = sample_id)) +
+#     geom_line(alpha = .2) +
+#     theme_minimal() +
+#     scale_x_sqrt(breaks = c(.01, .05, .1, .2, .5, 1)) +
+#     scale_y_continuous(breaks = seq(0, 1, .2)) +
+#     labs(x = "fraction of genes", y = "fraction of counts") +
+#     theme(legend.position = "none") +
+#     cowplot::theme_cowplot()
+# })
+
+# add qc metrices to metadata
+all_samples_meta_w_qc <- mapply(meta = all_samples_info_split, 
+                                counts = all_FC_counts_list, 
+                                organ = organs, 
+                                file_prefix = c('', 'batch1_', ''), 
+                                FUN = add_qc, 
+                                MoreArgs = list(out_dir = out_dir, 
+                                                feature_meta = mouse_feature_meta, 
+                                                overwrite = FALSE), 
+                                SIMPLIFY = FALSE)
+
+biotype_pct_barplots <- lapply(all_samples_meta_w_qc, 
+                               FUN = make_pct_biotype_bar, 
+                               mouse_feature_meta)
+
+
+ggplot(bind_rows(all_samples_meta_w_qc), 
+       aes(x = stage, y = feature_counts, fill = Treatment)) +
+  geom_boxplot(outlier.size = 0) +
+  scale_y_log10() +
+  geom_point(aes(group = Treatment), 
+             position = position_dodge(width = 0.75), 
+             size = 1) +
+  facet_wrap(~Region, scales = 'free') +
+  theme_light() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) 
+  # geom_text(aes(label = SampleID), size = 3)
+  
+
+ggplot(bind_rows(all_samples_meta_w_qc), 
+       aes(x = Region, y = feature_counts)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  # geom_point( size = 1) +
+  # facet_wrap(~Region, scales = 'free') +
+  theme_light() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) 
+  
+
+```
+
 
 ## per organ PCA plots 
 ```{r make_pca_plots}
 # make pca plots split per organ
 pcas <- lapply(all_FC_counts_list, FUN = do_pca)
-pca_dfs <- mapply(all_samples_info_split, pcas,FUN = get_pca_meta_df, SIMPLIFY = FALSE) %>%
+pca_dfs <- mapply(all_samples_meta_w_qc, pcas,FUN = get_pca_meta_df, SIMPLIFY = FALSE) %>%
   lapply(., function(x){
    x <- x %>% mutate(Treatment_wpi = paste(Treatment, gsub(' ', '_', wpi), sep = '.')) %>%
            mutate(Treatment_stage = paste(Treatment, stage, sep = '_'))
@@ -90,10 +163,14 @@ pca_dfs <- mapply(all_samples_info_split, pcas,FUN = get_pca_meta_df, SIMPLIFY =
 }) 
 
 
+# get genes with top loadings for each organ
+top_loadings <- lapply(pcas, FUN=get_top_loadings, feature_data = mouse_feature_meta) 
+
 pca_plots <- vector("list", length = 3) %>% setNames(organs)
 for(i in organs){
   
   pca_plots[[i]] <- make_pca_plot2(pca_dfs[[i]], 
+                          top_loadings[[i]], 
                           sample_label = FALSE, 
                           proportional_axes = TRUE) 
 }
@@ -366,7 +443,7 @@ deseq_dotplot <- ggplot() +
 # PCA plots and legends
 ggsave(pca_plots_combined, merged_pca_plots_file)
 ggsave(timepoint_RML_legend, pca_rml_time_legend_file)
-ggsave(timepoint_RML_legend. pca_nbh_time_legend_file)
+ggsave(timepoint_RML_legend, pca_nbh_time_legend_file)
 ggsave(pca_shape_legend, pca_shape_legend_file)
 ggsave(deseq2_dotplot, deseq2_dotplot_file, width = 5, height = 8)
 
