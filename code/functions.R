@@ -103,7 +103,7 @@ extract_group_counts <- function(organ, meta){
 
 add_qc <- function(meta, counts, organ, feature_meta, file_prefix, out_dir, overwrite = FALSE){
 
-  f <- file.path(out_dir, paste(file_prefix, organ, 'metadata_w_qc.rds', sep = '_'))
+  f <- file.path(out_dir, paste0(file_prefix, organ, '_metadata_w_qc.rds'))
 
   if(file.exists(f) & overwrite == FALSE){
 
@@ -336,7 +336,7 @@ make_pca_plot2 <- function(pca_df,
           strip.text = element_text(size = 9, color = 'black')) +
     # scale_color_manual(values = c('#B03A2E', '#2874A6'), breaks = c('RML6', 'NBH')) +
     scale_fill_manual(values = c('#FADBD8', '#E74C3C', '#943126',
-                                 '#D6EAF8', '#3498DB', '#1F618D')) +
+                                 '#D6EAF8', '#3498DB', '#1F618D'))
     # geom_vline(xintercept = 0, linetype = 'dashed', linewidth = 0.5, color = 'lightgrey')
     # geom_hline(yintercept = 0, linetype = 'dashed', linewidth = 0.5, color = 'lightgrey')
     # geom_segment(data =loadings_df, mapping = aes(x = 0, xend = PC1, y = 0, yend = PC2), color ='black',

@@ -170,7 +170,6 @@ pca_plots <- vector("list", length = 3) %>% setNames(organs)
 for(i in organs){
   
   pca_plots[[i]] <- make_pca_plot2(pca_dfs[[i]], 
-                          top_loadings[[i]], 
                           sample_label = FALSE, 
                           proportional_axes = TRUE) 
 }
