@@ -14,7 +14,7 @@ library(randomcoloR)
 library(ggnewscale)
 library(testit)
 library(biomaRt)
-
+library(plotly)
 
 get_feature_counts <- function(counts_dir, organ,meta, file_prefix, overwrite = FALSE){
 
@@ -185,13 +185,14 @@ do_pca <- function(counts){
 
 get_pca_meta_df <- function(meta,pca){
   # meta must have a SampleID column matching column names in pca$x
-  pc_df <- as.data.frame(pca$x[, 1:2]) %>%
+  pc_df <- as.data.frame(pca$x[, 1:3]) %>%
     rownames_to_column('SampleID') %>%
     merge(., meta, by = 'SampleID')
 
   vars <- round((pca$sdev^2)/sum(pca$sdev^2)*100, digits = 1)
   pc_df$PC1_var <- vars[1]
   pc_df$PC2_var <- vars[2]
+  pc_df$PC3_var <- vars[3]
   pc_df
 }
 
@@ -295,7 +296,7 @@ make_pca_plot <- function(pca_df,
                    color = wpi),
                size = 2) +
     scale_color_brewer(palette = 'Greys') +
-  facet_wrap(~Region) +
+  # facet_wrap(~Region) +
 
   xlab(paste("PC1: ", unique(pca_df$PC1_var), "% variance", sep="")) +
   ylab(paste("PC2: ", unique(pca_df$PC2_var), "% variance", sep="")) +
@@ -324,7 +325,7 @@ make_pca_plot2 <- function(pca_df,
 
 
 
-  p <- ggplot(data = pca_df, aes(x =PC1, y = PC2, fill = Treatment_stage)) +
+  p <- ggplot(data = pca_df, aes(x =PC1, y = PC2,fill = Treatment_stage)) +
     geom_point(shape = 21) +
     xlab(paste("PC1: ", unique(pca_df$PC1_var), "% variance", sep="")) +
     ylab(paste("PC2: ", unique(pca_df$PC2_var), "% variance", sep="")) +
@@ -361,6 +362,40 @@ make_pca_plot2 <- function(pca_df,
 
   p
 }
+
+
+make_3d_pca_plot <- function(pca_df){
+plot_ly(pca_df, x = ~PC1, y = ~PC2, z = ~PC3, color = ~Treatment_stage,
+        colors = c('#FADBD8', '#E74C3C', '#943126',
+                   '#D6EAF8', '#3498DB', '#1F618D'),
+        sizes = 1) %>%
+  add_markers() %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "PC1"),
+      yaxis = list(title = "PC2"),
+      zaxis = list(title = "PC3")
+    ),
+    showlegend = TRUE
+  )
+}
+
+
+detect_bottom_outliers <- function(df, vec) {
+  # Calculate the quartiles and IQR
+  Q1 <- quantile(df[, vec], 0.25)
+  Q3 <- quantile(df[, vec], 0.75)
+  IQR <- Q3 - Q1
+
+  # Calculate lower bound for outliers
+  lower_bound <- Q1 - 1.5 * IQR
+
+  outliers <- df %>% filter(get(vec) < lower_bound) %>%
+    pull(SampleID)
+
+  return(outliers)
+}
+
 
 
 make_pca_legends <- function(pca_df, pal, treatment, legend.text = TRUE, legend = 'color'){

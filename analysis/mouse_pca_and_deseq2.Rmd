@@ -110,40 +110,49 @@ all_samples_meta_w_qc <- mapply(meta = all_samples_info_split,
                                 MoreArgs = list(out_dir = out_dir, 
                                                 feature_meta = mouse_feature_meta, 
                                                 overwrite = FALSE), 
-                                SIMPLIFY = FALSE)
+                                SIMPLIFY = FALSE) %>%
+  # add percent protein coding
+  lapply(., function(x){
+    x$pct_pc <- x[, "Protein-coding"]/x[, "lib_size"]
+    x
+  })
+
+# for each organs get bottom outliers based on library size, feature number and % of protein coding genes
+
+
+outliers_lib_size <- lapply(all_samples_meta_w_qc, function(x) detect_bottom_outliers(x, 'lib_size'))
+outliers_feature_count <- lapply(all_samples_meta_w_qc, function(x) detect_bottom_outliers(x, 'feature_counts'))
+outliers_pc_pct <- lapply(all_samples_meta_w_qc, function(x) detect_bottom_outliers(x, 'pct_pc'))
+
+all_outliers <- lapply(organs, function(x){
+  unique(c(outliers_lib_size[[x]], outliers_feature_count[[x]], outliers_pc_pct[[x]]))
+})
+
 
 biotype_pct_barplots <- lapply(all_samples_meta_w_qc, 
                                FUN = make_pct_biotype_bar, 
                                mouse_feature_meta)
 
+```
 
-ggplot(bind_rows(all_samples_meta_w_qc), 
-       aes(x = stage, y = feature_counts, fill = Treatment)) +
-  geom_boxplot(outlier.size = 0) +
-  scale_y_log10() +
-  geom_point(aes(group = Treatment), 
-             position = position_dodge(width = 0.75), 
-             size = 1) +
-  facet_wrap(~Region, scales = 'free') +
-  theme_light() +
-  theme(panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank(), 
-        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) 
-  # geom_text(aes(label = SampleID), size = 3)
-  
-
-ggplot(bind_rows(all_samples_meta_w_qc), 
-       aes(x = Region, y = feature_counts)) +
-  geom_boxplot() +
-  scale_y_log10() +
-  # geom_point( size = 1) +
-  # facet_wrap(~Region, scales = 'free') +
-  theme_light() +
-  theme(panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank()) 
-  
+```{r make_no_outlier_counts}
+all_samples_meta_w_qc_no_outs <- mapply(x = all_samples_meta_w_qc,
+                                        y = all_outliers, 
+                                        FUN = function(x, y){
+                                          x %>% filter(!SampleID %in% y)
+                                        }, SIMPLIFY = FALSE)
+# get counts
+all_FC_counts_list_no_outs <- mapply(organ = c('blood', 'muscle_batch1', 'spleen'),
+                             meta = all_samples_meta_w_qc_no_outs ,
+                             FUN= get_feature_counts,
+                             MoreArgs= list(counts_dir = Fcounts_main_dir,
+                                            file_prefix = 'no_outliers_', 
+                             overwrite = FALSE),
+                             SIMPLIFY = FALSE) %>%
+  setNames(organs)
 
 ```
+
 
 
 ## per organ PCA plots 
@@ -163,6 +172,9 @@ pca_dfs <- mapply(all_samples_meta_w_qc, pcas,FUN = get_pca_meta_df, SIMPLIFY = 
 }) 
 
 
+pca_plots_3d <- lapply(pca_dfs, make_3d_pca_plot)
+
+
 # get genes with top loadings for each organ
 top_loadings <- lapply(pcas, FUN=get_top_loadings, feature_data = mouse_feature_meta) 
 
@@ -170,76 +182,103 @@ pca_plots <- vector("list", length = 3) %>% setNames(organs)
 for(i in organs){
   
   pca_plots[[i]] <- make_pca_plot2(pca_dfs[[i]], 
+                          sample_label = TRUE, 
+                          proportional_axes = TRUE) 
+}
+
+
+# do pca without outliers
+
+pcas_no_outs <- lapply(all_FC_counts_list_no_outs, FUN = do_pca)
+pcas_dfs_no_outs <- mapply(all_samples_meta_w_qc_no_outs, pcas,FUN = get_pca_meta_df, SIMPLIFY = FALSE) %>%
+  lapply(., function(x){
+   x <- x %>% mutate(Treatment_wpi = paste(Treatment, gsub(' ', '_', wpi), sep = '.')) %>%
+           mutate(Treatment_stage = paste(Treatment, stage, sep = '_'))
+   
+   x$Treatment_stage <- factor(x$Treatment_stage,
+                               levels = paste(rep(c('NBH', 'RML6'), each = 3),
+                                              c('early', 'presymptomatic','symptomatic'), sep = '_'))
+   
+   x
+}) 
+
+
+pca_plots_no_outs <- vector("list", length = 3) %>% setNames(organs)
+for(i in organs){
+  
+  pca_plots_no_outs[[i]] <- make_pca_plot2(pcas_dfs_no_outs[[i]], 
                           sample_label = FALSE, 
                           proportional_axes = TRUE) 
 }
+
+
 
 ```
 
 
 ```{r mouse_deseq2_interaction}
-all_deseq2_interaction <- vector("list", length = 3) %>%
-  setNames(organs)
-for(i in organs){
-  counts <- all_FC_counts_list[[i]]
-  meta <- all_samples_info_split[[i]]
-  
- all_deseq2_interaction[[i]] <- run_deseq2(counts = counts, 
-                                           meta = meta, 
-                                          ctrl_level = 'NBH', 
-                                          main_var = 'Treatment', 
-                                          formula = ~stage + Treatment)
-  
-  print(paste0('Finished stage deseq2 for ',i))
-}
-
-# get nice outputs
-all_deseq2_interaction_nice <- mapply(dds = all_deseq2_interaction,
-                                  fname_prefix = paste0(organs, '_interaction'), 
-                                  FUN = get_nice_df_from_dds, 
-                                  MoreArgs = list(
-                                  AnnDb_object = org.Mm.eg.db, 
-                                  meta_vars_to_add = 'Region',  
-                                  mart_dataset = 'mmusculus_gene_ensembl', 
-                                  out_dir = out_dir, overwrite = FALSE), SIMPLIFY = FALSE)
+# all_deseq2_interaction <- vector("list", length = 3) %>%
+#   setNames(organs)
+# for(i in organs){
+#   counts <- all_FC_counts_list[[i]]
+#   meta <- all_samples_info_split[[i]]
+#   
+#  all_deseq2_interaction[[i]] <- run_deseq2(counts = counts, 
+#                                            meta = meta, 
+#                                           ctrl_level = 'NBH', 
+#                                           main_var = 'Treatment', 
+#                                           formula = ~stage + Treatment)
+#   
+#   print(paste0('Finished stage deseq2 for ',i))
+# }
+# 
+# # get nice outputs
+# all_deseq2_interaction_nice <- mapply(dds = all_deseq2_interaction,
+#                                   fname_prefix = paste0(organs, '_interaction'), 
+#                                   FUN = get_nice_df_from_dds, 
+#                                   MoreArgs = list(
+#                                   AnnDb_object = org.Mm.eg.db, 
+#                                   meta_vars_to_add = 'Region',  
+#                                   mart_dataset = 'mmusculus_gene_ensembl', 
+#                                   out_dir = out_dir, overwrite = FALSE), SIMPLIFY = FALSE)
 
 ```
 
 ```{r interaction_volcanos}
 
-all_deseq2_interaction_nice_merged <- bind_rows(all_deseq2_interaction_nice)
-
-volcano_plot_mouse_interaction <- ggplot(data = all_deseq2_interaction_nice_merged, aes(x = log2FoldChange, y = -log10(padj)))+
-  theme_light() +
-  facet_wrap(~Region, scales = 'free', ncol = 1) +
-  geom_point(aes(colour = gene_type),
-             alpha = 0.7,
-             shape = 16,
-             size = 1) +
-  geom_hline(yintercept = -log10(0.05),
-             linetype = "dashed",
-             color = "#575757",
-             linewidth = 0.1) +
-  geom_vline(xintercept = c(-0.5, 0.5),
-             linetype = "dashed",
-             color = "#575757",
-             linewidth = 0.1) +
-  scale_colour_manual(values =  c("Upregulated" = "#f2968d", "Downregulated" = "#71b7e6", "Nonsignificant" = "lightgrey")) +
-  guides(colour = guide_legend(override.aes = list(size= 4))) +
-  labs(x = expression("Log"[2]*" Fold Change"),
-       y = bquote(-Log[10]*.("FDR")),
-       colour = NULL) +
-  
-  theme(legend.text = element_text(size = 8),
-        axis.title = element_text(size = 9),
-        axis.text = element_text(size = 8),
-        strip.text = element_text(size = 9, color = 'black'), 
-        strip.background = element_rect(color = 'grey', fill = 'white'), 
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        legend.position = "bottom",
-        legend.direction = "horizontal") 
-
+# all_deseq2_interaction_nice_merged <- bind_rows(all_deseq2_interaction_nice)
+# 
+# volcano_plot_mouse_interaction <- ggplot(data = all_deseq2_interaction_nice_merged, aes(x = log2FoldChange, y = -log10(padj)))+
+#   theme_light() +
+#   facet_wrap(~Region, scales = 'free', ncol = 1) +
+#   geom_point(aes(colour = gene_type),
+#              alpha = 0.7,
+#              shape = 16,
+#              size = 1) +
+#   geom_hline(yintercept = -log10(0.05),
+#              linetype = "dashed",
+#              color = "#575757",
+#              linewidth = 0.1) +
+#   geom_vline(xintercept = c(-0.5, 0.5),
+#              linetype = "dashed",
+#              color = "#575757",
+#              linewidth = 0.1) +
+#   scale_colour_manual(values =  c("Upregulated" = "#f2968d", "Downregulated" = "#71b7e6", "Nonsignificant" = "lightgrey")) +
+#   guides(colour = guide_legend(override.aes = list(size= 4))) +
+#   labs(x = expression("Log"[2]*" Fold Change"),
+#        y = bquote(-Log[10]*.("FDR")),
+#        colour = NULL) +
+#   
+#   theme(legend.text = element_text(size = 8),
+#         axis.title = element_text(size = 9),
+#         axis.text = element_text(size = 8),
+#         strip.text = element_text(size = 9, color = 'black'), 
+#         strip.background = element_rect(color = 'grey', fill = 'white'), 
+#         panel.grid.major = element_blank(),
+#         panel.grid.minor = element_blank(),
+#         legend.position = "bottom",
+#         legend.direction = "horizontal") 
+# 
 
 
 ```
