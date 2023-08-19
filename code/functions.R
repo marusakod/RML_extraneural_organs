@@ -364,16 +364,21 @@ make_pca_plot2 <- function(pca_df,
 }
 
 
-make_stage_pca <- function(pca_df, proportional_axes, sample_label){
+make_stage_pca <- function(pca_df, proportional_axes = FALSE,
+                           sample_label = FALSE, legend.pos = 'none'){
 
-  p <- ggplot(data = pca_df, aes(x =PC1, y = PC2,fill = Treatment)) +
-    geom_point(shape = 21) +
-    xlab(paste("PC1: ", unique(pca_df$PC1_var), "% variance", sep="")) +
-    ylab(paste("PC2: ", unique(pca_df$PC2_var), "% variance", sep="")) +
+  p <- ggplot(data = pca_df, aes(x =PC1, y = PC2, fill = Treatment)) +
+    geom_point(size = 1, shape = 21, color = '#7F8C8D') +
+    labs(
+    x = paste("PC1: ", unique(pca_df$PC1_var), "% variance", sep=""),
+    y = paste("PC2: ", unique(pca_df$PC2_var), "% variance", sep=""),
+    fill = NULL) +
     theme_light() +
-    facet_wrap(~ Region) +
+    facet_wrap(~stage) +
     theme(panel.grid.major = element_blank(),
           panel.grid.minor = element_blank(),
+          legend.position = legend.pos,
+          legend.direction = 'horizontal',
           axis.text = element_text(size = 8),
           axis.title = element_text(size = 9),
           legend.text = element_text(size = 8),
@@ -382,7 +387,8 @@ make_stage_pca <- function(pca_df, proportional_axes, sample_label){
           panel.background = element_rect(color = '#99A3A4'),
           strip.text = element_text(size = 9, color = 'black')) +
     # scale_color_manual(values = c('#B03A2E', '#2874A6'), breaks = c('RML6', 'NBH')) +
-    scale_fill_manual(values = c('black', 'red'))
+    scale_fill_manual(values = c('#D7DBDD', '#E48017'),
+                      breaks = c('NBH', 'RML6'))
   # geom_vline(xintercept = 0, linetype = 'dashed', linewidth = 0.5, color = 'lightgrey')
   # geom_hline(yintercept = 0, linetype = 'dashed', linewidth = 0.5, color = 'lightgrey')
   # geom_segment(data =loadings_df, mapping = aes(x = 0, xend = PC1, y = 0, yend = PC2), color ='black',

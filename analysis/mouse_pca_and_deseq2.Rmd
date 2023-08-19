@@ -135,26 +135,6 @@ biotype_pct_barplots <- lapply(all_samples_meta_w_qc,
 
 ```
 
-```{r make_no_outlier_counts}
-all_samples_meta_w_qc_no_outs <- mapply(x = all_samples_meta_w_qc,
-                                        y = all_outliers, 
-                                        FUN = function(x, y){
-                                          x %>% filter(!SampleID %in% y)
-                                        }, SIMPLIFY = FALSE)
-# get counts
-all_FC_counts_list_no_outs <- mapply(organ = c('blood', 'muscle_batch1', 'spleen'),
-                             meta = all_samples_meta_w_qc_no_outs ,
-                             FUN= get_feature_counts,
-                             MoreArgs= list(counts_dir = Fcounts_main_dir,
-                                            file_prefix = 'no_outliers_', 
-                             overwrite = FALSE),
-                             SIMPLIFY = FALSE) %>%
-  setNames(organs)
-
-```
-
-
-
 ## per organ PCA plots 
 ```{r make_pca_plots}
 # make pca plots split per organ
@@ -186,33 +166,6 @@ for(i in organs){
                           proportional_axes = TRUE) 
 }
 
-
-# do pca without outliers
-
-pcas_no_outs <- lapply(all_FC_counts_list_no_outs, FUN = do_pca)
-pcas_dfs_no_outs <- mapply(all_samples_meta_w_qc_no_outs, pcas,FUN = get_pca_meta_df, SIMPLIFY = FALSE) %>%
-  lapply(., function(x){
-   x <- x %>% mutate(Treatment_wpi = paste(Treatment, gsub(' ', '_', wpi), sep = '.')) %>%
-           mutate(Treatment_stage = paste(Treatment, stage, sep = '_'))
-   
-   x$Treatment_stage <- factor(x$Treatment_stage,
-                               levels = paste(rep(c('NBH', 'RML6'), each = 3),
-                                              c('early', 'presymptomatic','symptomatic'), sep = '_'))
-   
-   x
-}) 
-
-
-pca_plots_no_outs <- vector("list", length = 3) %>% setNames(organs)
-for(i in organs){
-  
-  pca_plots_no_outs[[i]] <- make_pca_plot2(pcas_dfs_no_outs[[i]], 
-                          sample_label = FALSE, 
-                          proportional_axes = TRUE) 
-}
-
-
-
 ```
 
 
@@ -239,7 +192,12 @@ all_counts_stage_organ_split <- mapply(meta = all_samples_info_stage_organ_split
 stage_pcas <- lapply(all_counts_stage_organ_split, FUN = do_pca)
 pcas_dfs_stage <- mapply(all_samples_info_stage_organ_split, stage_pcas,FUN = get_pca_meta_df, SIMPLIFY = FALSE) 
 
-stage_pca_plots <- lapply(pcas_dfs_stage, make_stage_pca, proportional_axes = TRUE, sample_label = TRUE)
+stage_pca_plots <- lapply(pcas_dfs_stage, make_stage_pca)
+stage_p_for_legend <- make_stage_pca(pcas_dfs_stage[[1]],
+                                     legend.pos = 'bottom')
+
+stages_pca_legend <- ggpubr::get_legend(stage_p_for_legend)
+do.call('grid.arrange', c(stage_pca_plots, ncol = 3, nrow = 3))
 
 
 ```
