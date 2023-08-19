@@ -216,6 +216,36 @@ for(i in organs){
 ```
 
 
+# per stage PCA plots
+
+```{r make_stage_pca_plots}
+
+all_samples_info_stage_organ_split <- all_samples_info %>%
+  # filter(!SampleID %in% unlist(all_outliers)) %>%
+  group_by(Region, stage) %>%
+   group_split() %>%
+   setNames(lapply(., function(x) paste(unique(x$stage), unique(x$Region), sep = '_'))) %>%
+  # add rownames
+  lapply(., function(x){
+    x <-as.data.frame(x)
+    rownames(x) <- x$SampleID
+    return(x)})
+
+all_counts_stage_organ_split <- mapply(meta = all_samples_info_stage_organ_split, 
+                                    organ = str_after_first(names(all_samples_info_stage_organ_split), pattern = '_'),
+                                   FUN = extract_group_counts, 
+                                   SIMPLIFY = FALSE)
+
+stage_pcas <- lapply(all_counts_stage_organ_split, FUN = do_pca)
+pcas_dfs_stage <- mapply(all_samples_info_stage_organ_split, stage_pcas,FUN = get_pca_meta_df, SIMPLIFY = FALSE) 
+
+stage_pca_plots <- lapply(pcas_dfs_stage, make_stage_pca, proportional_axes = TRUE, sample_label = TRUE)
+
+
+```
+
+
+
 ```{r mouse_deseq2_interaction}
 # all_deseq2_interaction <- vector("list", length = 3) %>%
 #   setNames(organs)
@@ -283,6 +313,74 @@ for(i in organs){
 
 ```
 
+```{r mouse_deseq2_per_stage}
+all_samples_info_stage_organ_split <- all_samples_info %>%
+  filter(!SampleID %in% unlist(all_outliers)) %>% 
+  group_by(Region, stage) %>%
+   group_split() %>%
+   setNames(lapply(., function(x) paste(unique(x$stage), unique(x$Region), sep = '_'))) %>%
+  # add rownames
+  lapply(., function(x){
+    x <-as.data.frame(x)
+    rownames(x) <- x$SampleID
+    return(x)})
+
+all_counts_stage_organ_split <- mapply(meta = all_samples_info_stage_organ_split, 
+                                    organ = str_after_first(names(all_samples_info_stage_organ_split), pattern = '_'),
+                                   FUN = extract_group_counts, 
+                                   SIMPLIFY = FALSE)
+
+all_deseqs_stage_organ_split <- vector("list", length  = length(all_counts_stage_organ_split))
+
+for(i in 1:length(all_deseqs_stage_organ_split)){
+  organ <- str_after_first(names(all_samples_info_stage_organ_split)[i], pattern = '_')
+  counts <- all_counts_stage_organ_split[[i]]
+  meta <- all_samples_info_stage_organ_split[[i]]
+
+ all_deseqs_stage_organ_split[[i]] <- run_deseq2(counts = counts, 
+                                                 meta = meta, 
+                                                 ctrl_level = 'NBH', 
+                                                 main_var = 'Treatment', 
+                                                 formula = ~ Treatment)
+  
+  print(paste0('Finished for ', names(all_samples_info_stage_organ_split)[i]))
+}
+
+
+# get nice outputs
+
+all_deseq2_stage_organ_split_nice <- mcmapply(dds = all_deseqs_stage_organ_split,
+                                  fname_prefix = names(all_counts_stage_organ_split), 
+                                  FUN = get_nice_df_from_dds, 
+                                  MoreArgs = list(
+                                  feature_meta = mouse_feature_meta, 
+                                  meta_vars_to_add = c('wpi', 'Region', 'stage'), 
+                                  out_dir = out_dir, overwrite = FALSE), SIMPLIFY = FALSE, mc.cores = 4) %>%
+  setNames(names(all_counts_stage_organ_split))
+
+
+all_common_genes <- organs %>%
+  lapply(., function(x){
+  all_deseq2_stage_organ_split_nice[grepl(x, names(all_deseq2_stage_organ_split_nice))] %>%
+      common_genes()
+  }) %>%
+  setNames(organs)
+
+
+# merge deseq2 results for each organ 
+
+all_deseq2_stage_organ_merged <- organs %>%
+  lapply(., function(x){
+  m <- bind_rows(all_deseq2_stage_organ_split_nice[grepl(x, names(all_deseq2_stage_organ_split_nice))]) %>%
+                   mutate(common_gene = case_when(ensembl_gene_id %in% all_common_genes[[x]] ~ TRUE, 
+                                                  TRUE ~FALSE))
+  }) %>%
+  setNames(organs)
+
+
+```
+
+
 
 
 ```{r mouse_deseq2_per_tp}
@@ -291,7 +389,7 @@ for(i in organs){
 # prepare metadata
 all_samples_info_tp_organ_split <- all_samples_info %>%
   # remove outliers
-  filter(!SampleID %in% unlist(all_outliers)) %>% 
+  # filter(!SampleID %in% unlist(all_outliers)) %>% 
   group_by(Region, wpi) %>% 
   group_split() %>%
   setNames(lapply(., function(x) gsub(' ', '-', paste(unique(x$wpi), unique(x$Region), sep = '_')))) %>%
@@ -481,7 +579,7 @@ ggsave(pca_plots_combined, merged_pca_plots_file)
 ggsave(timepoint_RML_legend, pca_rml_time_legend_file)
 ggsave(timepoint_RML_legend, pca_nbh_time_legend_file)
 ggsave(pca_shape_legend, pca_shape_legend_file)
-ggsave(deseq2_dotplot, deseq2_dotplot_file, width = 5, height = 8)
+ggsave(deseq2_dotplot_file, deseq_dotplot, width = 5, height = 8)
 
 ```
 

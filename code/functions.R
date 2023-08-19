@@ -357,10 +357,53 @@ make_pca_plot2 <- function(pca_df,
 
 
   if(sample_label == TRUE){
+    p <- p + ggrepel::geom_text_repel(aes(label = SampleID), size = 3, max.overlaps = Inf)
+  }
+
+  p
+}
+
+
+make_stage_pca <- function(pca_df, proportional_axes, sample_label){
+
+  p <- ggplot(data = pca_df, aes(x =PC1, y = PC2,fill = Treatment)) +
+    geom_point(shape = 21) +
+    xlab(paste("PC1: ", unique(pca_df$PC1_var), "% variance", sep="")) +
+    ylab(paste("PC2: ", unique(pca_df$PC2_var), "% variance", sep="")) +
+    theme_light() +
+    facet_wrap(~ Region) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.text = element_text(size = 8),
+          axis.title = element_text(size = 9),
+          legend.text = element_text(size = 8),
+          legend.title = element_text(size = 9),
+          strip.background = element_rect(color = '#99A3A4', fill = 'white'),
+          panel.background = element_rect(color = '#99A3A4'),
+          strip.text = element_text(size = 9, color = 'black')) +
+    # scale_color_manual(values = c('#B03A2E', '#2874A6'), breaks = c('RML6', 'NBH')) +
+    scale_fill_manual(values = c('black', 'red'))
+  # geom_vline(xintercept = 0, linetype = 'dashed', linewidth = 0.5, color = 'lightgrey')
+  # geom_hline(yintercept = 0, linetype = 'dashed', linewidth = 0.5, color = 'lightgrey')
+  # geom_segment(data =loadings_df, mapping = aes(x = 0, xend = PC1, y = 0, yend = PC2), color ='black',
+  #              inherit.aes = FALSE)
+  #
+
+
+  if(proportional_axes == TRUE){
+
+    p <- p + coord_fixed()
+  }
+
+
+  if(sample_label == TRUE){
     p <- p + ggrepel::geom_text_repel(aes(label = wpi), size = 3, max.overlaps = Inf)
   }
 
   p
+
+
+
 }
 
 
