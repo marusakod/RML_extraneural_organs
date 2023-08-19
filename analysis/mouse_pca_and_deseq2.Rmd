@@ -289,11 +289,15 @@ for(i in organs){
 # run deseq2 for all organs and timepoint
 
 # prepare metadata
-all_samples_info_tp_organ_split <- all_samples_info %>% group_by(Region, wpi) %>% 
+all_samples_info_tp_organ_split <- all_samples_info %>%
+  # remove outliers
+  filter(!SampleID %in% unlist(all_outliers)) %>% 
+  group_by(Region, wpi) %>% 
   group_split() %>%
   setNames(lapply(., function(x) gsub(' ', '-', paste(unique(x$wpi), unique(x$Region), sep = '_')))) %>%
   # add rownames
   lapply(., function(x){
+    x <-as.data.frame(x)
     rownames(x) <- x$SampleID
     return(x)})
   
@@ -311,17 +315,12 @@ for(i in 1:length(all_deseqs_tp_organ_split)){
   organ <- str_after_first(names(all_samples_info_tp_organ_split)[i], pattern = '_')
   counts <- all_counts_tp_organ_split[[i]]
   meta <- all_samples_info_tp_organ_split[[i]]
-  if(length(unique(meta$batch)) == 1){
-    Form = ~ Treatment
-  }else{
-    Form = ~batch + Treatment
-  }
-  
+
   all_deseqs_tp_organ_split[[i]] <- run_deseq2(counts = counts, 
                                                meta = meta, 
                                                ctrl_level = 'NBH', 
                                                main_var = 'Treatment', 
-                                               formula = Form)
+                                               formula = ~ Treatment)
   
   print(paste0('Finished for ', names(all_samples_info_tp_organ_split)[i]))
 }
@@ -332,9 +331,8 @@ all_deseq2_tp_organ_split_nice <- mcmapply(dds = all_deseqs_tp_organ_split,
                                   fname_prefix = names(all_counts_tp_organ_split), 
                                   FUN = get_nice_df_from_dds, 
                                   MoreArgs = list(
-                                  AnnDb_object = org.Mm.eg.db, 
+                                  feature_meta = mouse_feature_meta, 
                                   meta_vars_to_add = c('wpi', 'Region', 'stage'), 
-                                  mart_dataset = 'mmusculus_gene_ensembl', 
                                   out_dir = out_dir, overwrite = FALSE), SIMPLIFY = FALSE, mc.cores = 4) %>%
   setNames(names(all_counts_tp_organ_split))
 

@@ -488,7 +488,7 @@ run_deseq2 <- function(counts, meta, formula, ctrl_level, main_var){
 
 # extract nice results table from DESeqDataSet object
 
-get_nice_df_from_dds <- function(dds, AnnDb_object, mart_dataset,
+get_nice_df_from_dds <- function(dds, feature_meta,
                                  out_dir, fname_prefix, meta_vars_to_add, overwrite = FALSE){
 
   file <- file.path(out_dir, paste0(fname_prefix, '_deseq2_results.nice.rds'))
@@ -497,16 +497,16 @@ get_nice_df_from_dds <- function(dds, AnnDb_object, mart_dataset,
    readRDS(file)
   }else{
   res  <- as.data.frame(results(dds))
-  res$geneSymbol <- mapIds(AnnDb_object, keys = rownames(res), keytype = 'ENSEMBL', column = 'SYMBOL')
+  # res$geneSymbol <- mapIds(AnnDb_object, keys = rownames(res), keytype = 'ENSEMBL', column = 'SYMBOL')
   res <- res %>% rownames_to_column("ensembl_gene_id")
 
   # get biotype of gene
-  mart <- useMart('ensembl', dataset = mart_dataset)
-  genes_and_biotypes <- getBM(filters = 'ensembl_gene_id',
-                              attributes = c('ensembl_gene_id', 'gene_biotype'),
-                              values = res$ensembl_gene_id, mart = mart)
+  # mart <- useMart('ensembl', dataset = mart_dataset)
+  # genes_and_biotypes <- getBM(filters = 'ensembl_gene_id',
+  #                             attributes = c('ensembl_gene_id', 'gene_biotype'),
+  #                             values = res$ensembl_gene_id, mart = mart)
 
-  res <- merge(res, genes_and_biotypes, by = 'ensembl_gene_id', all.x = TRUE)
+  res <- merge(res, feature_meta, by = 'ensembl_gene_id', all.x = TRUE, all.y = FALSE)
 
   # label down and upregulated genes
 
