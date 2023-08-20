@@ -273,7 +273,6 @@ do.call('grid.arrange', c(stage_pca_plots, ncol = 3, nrow = 3))
 
 ```{r mouse_deseq2_per_stage}
 all_samples_info_stage_organ_split <- all_samples_info %>%
-  filter(!SampleID %in% unlist(all_outliers)) %>% 
   group_by(Region, stage) %>%
    group_split() %>%
    setNames(lapply(., function(x) paste(unique(x$stage), unique(x$Region), sep = '_'))) %>%
@@ -313,7 +312,7 @@ all_deseq2_stage_organ_split_nice <- mcmapply(dds = all_deseqs_stage_organ_split
                                   MoreArgs = list(
                                   feature_meta = mouse_feature_meta, 
                                   meta_vars_to_add = c('wpi', 'Region', 'stage'), 
-                                  out_dir = out_dir, overwrite = FALSE), SIMPLIFY = FALSE, mc.cores = 4) %>%
+                                  out_dir = out_dir, overwrite = TRUE), SIMPLIFY = FALSE, mc.cores = 4) %>%
   setNames(names(all_counts_stage_organ_split))
 
 
@@ -411,6 +410,93 @@ all_deseq2_tp_organ_merged <- organs %>%
   }) %>%
   setNames(organs)
 ```
+
+```{r blood_early_DEGs}
+
+# find overlapping DEGs in early blood timepoints
+blood_early_overlap <- lapply(all_deseq2_tp_organ_split_nice[c(1:2)], 
+                              FUN = function(x){
+                                #extract DEGS
+                                x %>% filter(gene_type != 'Nonsignificant') %>%
+                                  pull(ensembl_gene_id)
+                              }) %>% Reduce(intersect, .)
+
+blood_early_universe <- lapply(all_deseq2_tp_organ_split_nice[c(1:2)], 
+                              FUN = function(x)x %>% pull(ensembl_gene_id)) %>% 
+                              Reduce(intersect, .)
+
+# do ORA
+ORA_early_blood <- doORA(blood_early_overlap, 
+                         blood_early_universe, 
+                         org.Mm.eg.db, 
+                         out_dir = out_dir,
+                         file_prefix = 'blood_early_DEGs_overlap', overwrite = FALSE)
+
+blood_genes <- ORA_early_blood %>% filter(str_detect(Description, 'healing|coagulation|hemostasis')) %>%
+  pull(geneID) %>%
+  lapply(., function(x) str_split(x, pattern = '\\/') %>% unlist()) %>%
+  unlist() %>%
+  unique()
+
+early_blood_samples <- all_samples_info_split$blood %>% filter(wpi %in% c('4 wpi', '8 wpi'))
+
+blood_genes_counts_early <- all_FC_counts_list$blood %>% vst(.) %>%
+  .[blood_genes, early_blood_samples %>% pull(SampleID)]
+
+# get z score
+blood_early_zscores <-(blood_genes_counts_early - rowMeans(blood_genes_counts_early))/apply(blood_genes_counts_early,1, sd, na.rm = TRUE) 
+
+# put gene symbols as rownames
+rownames(blood_early_zscores) <- mouse_feature_meta %>%
+  filter(ensembl_gene_id %in% rownames(blood_early_zscores)) %>%
+  .[rownames(blood_early_zscores), ] %>%
+  pull(gene_symbol)
+
+
+# make heatmap
+Rdbu_colors <- circlize::colorRamp2(c(-2, 0, 2),
+                                    c('#2874A6', 'white','#CB4335'))
+
+col_annotation <- HeatmapAnnotation(Condition = early_blood_samples$Treatment,
+                                    col = list(Condition = c('NBH' = '#D7DBDD', 'RML6' = '#E48017')),
+                                    annotation_legend_param = list(Condition = list(title = '')),
+                                    simple_anno_size = unit(0.3, 'cm'),
+                                    annotation_name_gp = gpar(fontsize = 0), 
+                                    annotation_label = gpar(fontsize = 20))
+
+# top_col_annnotation <- HeatmapAnnotation(empty = anno_empty(border = FALSE),
+#                                         foo = anno_block(gp = gpar(fill = 'white'), labels =c('4 wpi', '8 wpi')))
+
+
+early_blood_degs_heatmap <- ComplexHeatmap::Heatmap(blood_early_zscores, 
+                        col = Rdbu_colors, 
+                        show_row_names = TRUE, 
+                        row_names_side = 'left', 
+                        show_row_dend = FALSE, 
+                        cluster_columns =FALSE, 
+                        # column_title = NULL, 
+                        show_column_dend = FALSE,
+                        column_order = 
+                        c('PB-11_blood', 'PB-2_blood', 'PB-9_blood', 
+                          'PB-7_blood', 'PB-14_blood', 'PB-16_blood', 
+                          'PB-27_blood', 'PB-18_blood', 'PB-25_blood', 
+                          'PB-31_blood', 'PB-23_blood', 'PB-30_blood'), 
+                        column_split = early_blood_samples$wpi, 
+                        show_column_names = FALSE, 
+                        row_names_gp = grid::gpar(fontsize = 8), 
+                        column_title_gp = grid::gpar(fontsize = 10), 
+                        # name = 'z-score',
+                        heatmap_legend_param = list(title = 'z-score', 
+                                                    labels_gp = gpar(fontsize = 8), 
+                                                    legend_height = unit(3, "cm")), 
+                        bottom_annotation = col_annotation)
+
+  
+  
+  
+  
+```
+
 
 
 ```{r make_dotplot}

@@ -603,6 +603,52 @@ common_genes <- function(deseq2_results){
 }
 
 
+# universal ORA function
+doORA <- function(genes, uni, AnnDbi_obj, out_dir, file_prefix, overwrite = FALSE){
+
+f <- file.path(out_dir, paste0(file_prefix, '_ORA_results.rds'))
+
+if(file.exists(f) & overwrite == FALSE){
+  readRDS(f)
+}else{
+    res <- enrichGO(gene = genes,
+                    OrgDb = AnnDbi_obj,
+                    keyType = "ENSEMBL",
+                    ont = "BP",
+                    minGSSize = 10,
+                    maxGSSize = 300,
+                    universe = uni)
+
+    res <- clusterProfiler::simplify(res)
+
+    res <- res@result %>% filter(p.adjust < 0.05)
+
+    # res <- res %>% filter(p.adjust <= 0.05)
+    # res$timestage <- stage
+    #
+    if(nrow(res) == 0){
+      return("No significant ORA results")
+    }else{
+    res <- res %>%
+      arrange(p.adjust)  %>%
+      mutate(pcat = case_when(p.adjust < 10^-8 ~ "<10-8",
+                              p.adjust >10^-8 & p.adjust <10^-7  ~ "10^-8-10^-7",
+                              p.adjust >10^-7 & p.adjust <10^-6  ~ "10^-7-10^-6",
+                              p.adjust >10^-6 & p.adjust <10^-5  ~ "10^-6-10^-5",
+                              p.adjust >10^-5 & p.adjust <10^-4 ~ "10^-5-10^-4",
+                              p.adjust >10^-4 & p.adjust <10^-3 ~ "10^-4-10^-3",
+                              p.adjust >10^-3 & p.adjust <0.01 ~ "10^-3-0.01",
+                              p.adjust > 0.01 & p.adjust <0.05 ~ "0.01-0.05",
+                              TRUE ~ "0.05-1"))
+      saveRDS(res, f)
+      return(res)
+
+    }
+}
+}
+
+
+
 ########## WGCNA
 
 get_input_for_wgcna <- function(counts, sample_info, file.prefix, out_dir, overwrite = FALSE){
@@ -642,6 +688,9 @@ get_input_for_wgcna <- function(counts, sample_info, file.prefix, out_dir, overw
   }
 
 }
+
+
+
 
 
 
