@@ -1,0 +1,259 @@
+---
+title: "Human (CJD) muslce analysis"
+author: "Marusa Koderman"
+date: '2023-07-31'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(openxlsx)
+library(ComplexHeatmap)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r helpers}
+source('code/functions.R')
+```
+
+
+```{r inputs}
+
+# get metadata
+CJD_meta <- read.xlsx('data/metadata/CJD_metadata.xlsx')
+rownames(CJD_meta) <- CJD_meta$SampleID
+
+# get counts
+CJD_counts <- as.matrix(readRDS('data/FeatureCounts/CJD_count_mx.rds'))
+
+# get mouse hub genes
+mouse_b1_hubs <- readRDS('output/wgcna/muscle_b1_hub_gene_ranking.rds')
+mouse_b2_hubs <- readRDS('output/wgcna/muscle_b2_hub_gene_ranking.rds')
+```
+
+```{r outputs}
+out_dir <- 'output/human_CJD_muscle'
+# plots
+CJD_pca_plot_file <- file.path(out_dir, 'CJD_pca_plot.svg')
+CJD_volcano_file <- file.path(out_dir, 'CJD_degs_volcano.svg')
+cjd_sample_heatmap_file <- file.path(out_dir, 'CJD_sample_heatmap.svg')
+glul_norm_counts_file <- file.path(out_dir, 'human_GLUL_norm_counts.svg')
+
+# files
+CJD_deseq2_res_file <- 'CJD_muscle'
+```
+
+```{r get_human_feature_meta}
+
+human_feature_meta <- get_feature_data(rownames(CJD_counts),
+                                       symbols= 'hgnc_symbol', 
+                                       mart_dataset = 'hsapiens_gene_ensembl', 
+                                       species= 'human', 
+                                       out_dir = 'data/metadata', 
+                                       overwrite = FALSE)
+```
+
+
+
+```{r do PCA, echo=FALSE}
+CJD_pca_df <- do_pca(CJD_counts) %>%
+  get_pca_meta_df(CJD_meta, .)
+
+  # make a plot
+
+CJD_pca.plot <- ggplot(CJD_pca_df, aes(x=PC1, y=PC2, color = Condition)) +
+    geom_point(size = 2) +
+    xlab(paste("PC1: ", unique(CJD_pca_df$PC1_var), "% variance", sep="")) +
+    ylab(paste("PC2: ", unique(CJD_pca_df$PC2_var), "% variance", sep="")) +
+    theme_light() +
+    scale_color_manual(values = c("#D7DBDD", "#A569BD"), breaks = c("Ctrl", "sCJD")) +
+    theme(aspect.ratio = 1/1) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text = element_text(size = 8), 
+        axis.title = element_text(size = 9), 
+        legend.title = element_blank(), 
+        legend.text = element_text(size = 9)) 
+
+print(CJD_pca.plot)
+```
+
+```{r get_deseq2_results}
+cjd_deseq2 <- run_deseq2(counts = CJD_counts,
+                         meta = CJD_meta,
+                         formula = ~sex + Condition, 
+                         ctrl_level ='Ctrl',
+                         main_var = 'Condition')
+
+cjd_deseq2_res <- get_nice_df_from_dds(cjd_deseq2,
+                                       feature_meta = human_feature_meta, 
+                                       meta_vars_to_add = NULL,
+                                       out_dir = out_dir, fname_prefix = CJD_deseq2_res_file, 
+                                        overwrite = TRUE)
+```
+
+```{r make_volcano_plot}
+# extract protein coding genes
+
+cjd_deseq2_res_for_volcano <- cjd_deseq2_res %>%
+  filter(gene_biotype == "protein_coding") %>% drop_na(padj) 
+
+cjd_deseq2_res_for_volcano$gene_type <- factor(cjd_deseq2_res_for_volcano$gene_type,
+                                               levels = c("Nonsignificant",
+                                                          "Upregulated",
+                                                          "Downregulated"))
+
+cjd_degs_pcoding <- cjd_deseq2_res_for_volcano %>% filter(abs(log2FoldChange) >= 0.5, padj <= 0.05)
+
+# mouse genes (find overlapping hubs between batches and corresponding human symbols)
+orange_human<- intersect(mouse_b1_hubs$orange$hubLabel, mouse_b2_hubs$orange$hubLabel) %>%
+  .[. != ""] %>% toupper() %>% .[!.%in% c("MIR8114", "ADH1")] %>% c(., 'ADH1C')
+
+darkgreen_human <- intersect(mouse_b1_hubs$darkgreen$hubLabel, mouse_b2_hubs$darkgreen$hubLabel) %>%
+  .[. != ""] %>% toupper()
+
+annotated_genes <- cjd_deseq2_res_for_volcano %>%
+  filter(geneSymbol %in% c(orange_human, darkgreen_human)) %>%
+  mutate(gene_type_binary = case_when(gene_type == "Nonsignificant" ~ "Nonsignificant",
+                                      TRUE ~ "Significant"))
+
+upregulated_anno <- annotated_genes %>% filter(gene_type == "Upregulated")
+downregulated_anno <- annotated_genes %>% filter(gene_type == "Downregulated")
+nonsignificant_anno <- annotated_genes %>% filter(gene_type == "Nonsignificant")
+
+annotated_genes_labels <- annotated_genes %>% filter(geneSymbol %in% c("GLUL", "LRRC30"))
+
+volcano_plot <- ggplot(data = cjd_deseq2_res_for_volcano, aes(x = log2FoldChange, y = -log10(padj)))+
+  theme_light() +
+  geom_point(aes(colour = gene_type),
+             alpha = 0.7,
+             shape = 16,
+             size = 1) +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed",
+             color = "#575757",
+             linewidth = 0.1) +
+  geom_vline(xintercept = c(-0.5, 0.5),
+             linetype = "dashed",
+             color = "#575757",
+             linewidth = 0.1) +
+  scale_colour_manual(values =  c("Upregulated" = "#f2968d", "Downregulated" = "#71b7e6", "Nonsignificant" = "lightgrey")) +
+  guides(colour = guide_legend(override.aes = list(size= 4))) +
+  labs(x = expression("Log"[2]*" Fold Change"),
+       y = bquote(-Log[10]*.("FDR")),
+       colour = NULL) +
+ theme(legend.text = element_text(size = 8),
+        axis.title = element_text(size = 9),
+        axis.text = element_text(size = 8),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom",
+        legend.direction = "horizontal") +
+    geom_point(data = downregulated_anno,
+                         shape = 21,
+                         size = 2,
+                         fill = "#71b7e6",
+                         colour = "#220303") +
+    geom_point(data = upregulated_anno,
+               shape = 21,
+               size = 2,
+               fill = "#f2968d",
+               colour = "#220303") +
+
+  geom_point(data = nonsignificant_anno,
+             shape = 21,
+             size = 2,
+             fill = "lightgrey",
+             colour = "#220303") +
+
+     ggrepel::geom_text_repel(data = annotated_genes_labels,
+                    aes(label = geneSymbol, size = gene_type_binary),
+                    max.overlaps = Inf,
+                    colour = "#220303",
+                    min.segment.length = 0.5,
+                    show.legend = FALSE) +
+
+  scale_y_continuous(limits = c(0, 5.5)) +
+  scale_x_continuous(limits = c(-4.5, 4.5)) +
+  scale_size_manual(values = c(2, 3), breaks = c("Nonsignificant", "Significant"))
+
+
+```
+
+
+```{r plot_DEG_heatmap}
+
+# get normalized matrix of DEGs
+pcoding_degs_ensembl <- cjd_degs_pcoding  %>% dplyr::select(ensembl_gene_id) %>%
+  flatten_chr()
+
+pcoding_degs_counts <- vst(CJD_counts) %>%
+  .[pcoding_degs_ensembl, ]
+
+# get z score
+degs_zscore <-(pcoding_degs_counts- rowMeans(pcoding_degs_counts))/apply(pcoding_degs_counts,1, sd, na.rm = TRUE) 
+# make heatmap with ComplexHeatmap
+Rdbu_colors <- circlize::colorRamp2(c(-2, 0, 2),
+                                    c('#2874A6', 'white','#CB4335'))
+
+col_annotation <- HeatmapAnnotation(Condition = CJD_meta$Condition,
+                                    col = list(Condition = c('Ctrl' = "#D7DBDD", 'sCJD' = "#A569BD")), 
+                                    annotation_legend_param = list(Condition = list(title = 'Sample')),
+                                    simple_anno_size = unit(0.3, 'cm'), 
+                                    annotation_name_gp = gpar(fontsize = 0))
+cjd_sample_heatmap <- ComplexHeatmap::Heatmap(degs_zscore, 
+                        col = Rdbu_colors, 
+                        show_row_names = FALSE, 
+                        show_row_dend = FALSE, 
+                        show_column_names = FALSE,
+                        # name = 'z-score', 
+                        column_names_gp = gpar(fonsize = 12), 
+                        heatmap_legend_param = list(title = 'z-score', 
+                                                    legend_height = unit(3, "cm")), 
+                        top_annotation = col_annotation)
+
+```
+
+
+```{r plot_glul_counts}
+
+GLUL_norm_counts <- mapIds(org.Hs.eg.db, keys = "GLUL", keytype = "SYMBOL", column = "ENSEMBL") %>%
+ gene_norm_counts(., cjd_deseq2)
+
+# make plot 
+
+GLUL_norm_counts_plot <- ggplot(GLUL_norm_counts,
+                                aes(x = Condition, y = count)) +
+  stat_boxplot(geom = "errorbar", linetype = 1, width = 0.4, color = "#616A6B")+
+  geom_boxplot(fill =  "#D7DBDD", notch = FALSE, outlier.size = 0, outlier.colour = "white", color = "#616A6B", width = 0.4) +
+  geom_jitter(aes(group = Condition), size = 0.5, color = "black", width = 0.1, height = 0) +
+  theme_light() +
+  theme(panel.grid.major = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.y = element_text(size = 8),
+        axis.title.y = element_text(size = 9),
+        axis.text.x = element_text(size = 9, angle = 45, vjust = 1, hjust = 1)) +
+  labs(x = NULL, y = "GLUL RNA levels") +
+  geom_segment(aes(x = 1, xend = 2, y = 87000, yend = 87000), color = "#220303") +
+  geom_text(aes(label = "****", x = 1.5, y = 87500))
+
+print(GLUL_norm_counts_plot)
+
+```
+
+
+
+```{r export_plots}
+ggsave(CJD_pca.plot, CJD_pca_plot_file)
+ggsave(volcano_plot, CJD_volcano_file, width = 3.5, height = 3.7)
+ggsave(GLUL_norm_counts_plot, glul_norm_counts_file, width = 1.45, height = 2 )
+
+
+# sample heatmap
+svg(filename = cjd_sample_heatmap_file, 
+    width = 4, height = 6)
+cjd_sample_heatmap
+dev.off()
+```
+
+
