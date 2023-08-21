@@ -690,14 +690,124 @@ get_input_for_wgcna <- function(counts, sample_info, file.prefix, out_dir, overw
 }
 
 
+pick_soft_threshold <- function(wgcna_input, power_vec, file.prefix, out_dir, overwrite = FALSE){
+  f <- file.path(out_dir, paste0(file.prefix, '_sft.rds'))
+  if(file.exists(f) & overwrite == FALSE){
+    readRDS(f)
+  }else{
+
+    sft <- pickSoftThreshold(wgcna_input,
+                       powerVector = power_vec,
+                       networkType = "signed hybrid")
+    saveRDS(sft, f)
+    return(sft)
+  }
+
+}
 
 
 
+make_plot_for_power_selection <- function(sft){
+
+  sft.data <-  sft$fitIndices
+
+
+  ggplot(sft.data, aes(Power, SFT.R.sq, label = Power)) +
+    geom_point() +
+    geom_text(nudge_y = 0.1) +
+    geom_hline(yintercept = 0.8, color = 'red') +
+    labs(x = 'Power', y = 'Scale free topology model fit, signed R^2') +
+    theme_classic()
+
+}
+
+
+adj_tom_cluster <- function(norm.counts, thr, out_dir, file.prefix, overwrite = FALSE){
+
+  f <- file.path(out_dir, paste0(file.prefix, '_wgcna_modules_labels.rds'))
+
+  if(file.exists(f) & overwrite == FALSE){
+    readRDS(f)
+  }else{
+  soft_thr <- thr
+
+  adj <- adjacency(datExpr = norm.counts, type = "signed hybrid", power = soft_thr)
+
+  # transform the adjacency into Topological Overlap Matrix, and calculate the corresponding dissimilarity
+  TOM <- TOMsimilarity(adj, TOMType = "signed")
+  dissTOM <- 1-TOM
+
+  # cluster the genes
+  geneTree <- hclust(as.dist(dissTOM), method = "average")
+
+  # cut the clustering tree
+  minModuleSize = 30
+
+  # module identification using dynamic tree cut
+  dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM,
+                              deepSplit = 2, pamRespectsDendro = FALSE,
+                              minClusterSize = minModuleSize)
+
+  dynamicColors = labels2colors(dynamicMods)
+  saveRDS(dynamicColors, f)
+  return(dynamicColors)
+
+  }
+
+
+}
 
 
 
+merge_similar_modules <- function(norm.counts, colors, n,
+                                  file.prefix, out_dir, overwrite = FALSE){
+
+  f <- file.path(out_dir, paste0(file.prefix, '_final_modules_and_MEs.rds'))
+
+  if(file.exists(f) & overwrite == FALSE){
+    readRDS(f)
+  }else{
+
+  ## calculate module eigengenes
+  MElist <- moduleEigengenes(norm.counts, color = colors)
+  MEs <- MElist$eigengenes
+
+  if(length(unique(colors)) < n){
+    final <- list("moduleMEs" = MEs,
+                "moduleColors" = colors)
+
+  }else{
+
+    # calculate dissimilarity of module eigengenes
+    MEDiss = 1-cor(MEs)
+    # cluster module eigengenes
+    METree = hclust(as.dist(MEDiss), method = "average")
 
 
+    MEDissThres = 0.3 # height cut of 0.25, corresponds to a correlation of 0.75
+
+    # Call an automatic merging function
+    merge = mergeCloseModules(norm.counts, colors, cutHeight = MEDissThres, verbose = 3)
+    # The merged module colors
+    mergedColors = merge$colors
+    # Eigengenes of the new merged modules:
+    mergedMEs = merge$newMEs
+
+
+    # return new module eigengenes and module colors
+
+    final <- list("moduleMEs" = mergedMEs,
+                "moduleColors" = mergedColors)
+
+  }
+
+  saveRDS(final, f)
+  return(final)
+
+
+  }
+
+}
 
 
 # info_for_organ <- function(organ, Batch){
@@ -855,61 +965,6 @@ get_input_for_wgcna <- function(counts, sample_info, file.prefix, out_dir, overw
 #
 
 
-###################################
-
-get_input_for_wgcna <- function(counts, sample_info, organ, out_dir, overwrite = FALSE){
-
-  file <- file.path(out_dir, )
-
-  # identify outlier genes and samples
-  gsg <-  goodSamplesGenes(t(counts))
-  # remove genes that are detectd as outliers
-  wgcna_counts <- counts[gsg$goodGenes == TRUE,]
-
-  # Normalization
-
-
-  dds_for_wgcna  <- DESeqDataSetFromMatrix(countData = wgcna_counts,
-                                           colData = sample_info %>% dplyr::select(SampleID, Treatment) %>%
-column_to_rownames("SampleID"),
-                                           design = ~ 1) # not spcifying mode
-
-
-  # kepp genes that at least in 3 samples have a count of 10 or more
-  dds_for_wgcna_filtered  <- dds_for_wgcna[rowSums(counts(dds_for_wgcna) >= 10) >= 3, ]
-
-  # perform variance stabilization
-  dds_norm <- vst(dds_for_wgcna_filtered)
-
-  # get normalized counts
-  norm.counts <- assay(dds_norm) %>% t()
-
-  norm.counts
-
-}
-
-
-#####################################
-
-
-
-make_plot_for_power_selection <- function(sft){
-
-  sft.data <-  sft$fitIndices
-
-
-  ggplot(sft.data, aes(Power, SFT.R.sq, label = Power)) +
-    geom_point() +
-    geom_text(nudge_y = 0.1) +
-    geom_hline(yintercept = 0.8, color = 'red') +
-    labs(x = 'Power', y = 'Scale free topology model fit, signed R^2') +
-    theme_classic()
-
-}
-
-
-#######################################
-
 
 # make_timecourse_plot_for_module <- function(module_column){
   #
@@ -931,72 +986,9 @@ make_plot_for_power_selection <- function(sft){
   # }
 
 
-########################################
-
-adj_tom_cluster <- function(norm.counts, thr){
-
-  soft_thr <- thr
-
-  adj <- adjacency(datExpr = norm.counts, type = "signed hybrid", power = soft_thr)
-
-  # transform the adjacency into Topological Overlap Matrix, and calculate the corresponding dissimilarity
-  TOM <- TOMsimilarity(adj, TOMType = "signed")
-  dissTOM <- 1-TOM
-
-  # cluster the genes
-  geneTree <- hclust(as.dist(dissTOM), method = "average")
-
-  # cut the clustering tree
-  minModuleSize = 30
-
-  # module identificatin using dynamic tree cut
-  dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM,
-                              deepSplit = 2, pamRespectsDendro = FALSE,
-                              minClusterSize = minModuleSize)
-
-  dynamicColors = labels2colors(dynamicMods)
-
-}
-
 
 #########################################
 
-
-merge_similar_modules <- function(norm.counts, colors, n ){
-  ## calculate module eigengenes
-  MElist <- moduleEigengenes(norm.counts, color = colors)
-  MEs <- MElist$eigengenes
-
-  if(length(unique(colors)) < n){
-    return(list("moduleMEs" = MEs,
-                "moduleColors" = colors))
-
-  }else{
-
-    # calculate dissimilarity of module eigengenes
-    MEDiss = 1-cor(MEs)
-    # cluster module eigengenes
-    METree = hclust(as.dist(MEDiss), method = "average")
-
-
-    MEDissThres = 0.3 # height cut of 0.25, corresponds to a correlation of 0.75
-
-    # Call an automatic merging function
-    merge = mergeCloseModules(norm.counts, colors, cutHeight = MEDissThres, verbose = 3)
-    # The merged module colors
-    mergedColors = merge$colors
-    # Eigengenes of the new merged modules:
-    mergedMEs = merge$newMEs
-
-
-    # return new module eigengenes and module colors
-
-    return(list("moduleMEs" = mergedMEs,
-                "moduleColors" = mergedColors))
-
-  }
-
-}
 
 
 ##########################################
