@@ -63,7 +63,7 @@ get_feature_data <- function(ensembl_vec, symbols, mart_dataset, species, out_di
                               values = ensembl_vec, mart = mart)
 
   res <- merge(df, genes_and_biotypes, by = 'ensembl_gene_id', all.x = TRUE) %>%
-    dplyr::rename(gene_symbol = mgi_symbol) %>%
+    dplyr::rename('gene_symbol' = symbols) %>%
     group_by(ensembl_gene_id, gene_biotype) %>%
     dplyr::slice_head() %>%
     ungroup() %>%
@@ -773,6 +773,7 @@ merge_similar_modules <- function(norm.counts, colors, n,
   MEs <- MElist$eigengenes
 
   if(length(unique(colors)) < n){
+  names(colors) <- colnames(norm.counts)
     final <- list("moduleMEs" = MEs,
                 "moduleColors" = colors)
 
@@ -792,8 +793,7 @@ merge_similar_modules <- function(norm.counts, colors, n,
     mergedColors = merge$colors
     # Eigengenes of the new merged modules:
     mergedMEs = merge$newMEs
-
-
+   names(mergedColors) <- colnames(norm.counts)
     # return new module eigengenes and module colors
 
     final <- list("moduleMEs" = mergedMEs,

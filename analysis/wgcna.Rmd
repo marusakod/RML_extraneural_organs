@@ -1,0 +1,151 @@
+---
+title: "wgcna"
+author: "Marusa Koderman"
+date: '2023-08-01'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r helpers}
+source('code/functions.R')
+```
+
+```{r inputs}
+
+organs <- c('blood', 'muscle', 'spleen')
+
+# metadata files
+all_samples_info <- read.xlsx("data/metadata/all_samples_info.xlsx")
+all_samples_info$wpi <- paste(all_samples_info$wpi, 'wpi')
+all_samples_info$wpi <- gsub("term wpi", 'terminal', all_samples_info$wpi) %>%
+  factor(., levels = c('4 wpi', '8 wpi', '12 wpi', '14 wpi', '16 wpi', '18 wpi', '20 wpi','terminal')) 
+
+all_samples_info <- all_samples_info %>% mutate(stage = case_when(wpi %in% c('4 wpi', '8 wpi') ~ 'early', 
+                                                                  wpi %in% c('12 wpi', '14 wpi', '16 wpi') ~ 'presymptomatic', 
+                                                                  TRUE ~ 'symptomatic'))
+
+all_samples_info$stage <- factor(all_samples_info$stage, levels = c('early', 'presymptomatic', 'symptomatic'))
+
+
+all_samples_info_split <- all_samples_info %>% group_by(Region) %>% 
+  group_split() %>%
+  setNames(organs) %>%
+  lapply(., function(x){
+    x <- x %>% as.data.frame()
+    rownames(x) <- x$SampleID
+    x
+    })
+
+# get feature counts 
+
+Fcounts_main_dir <- 'data/FeatureCounts'
+
+all_FC_counts_list <- mapply(organ = c('blood', 'muscle_batch1', 'spleen'),
+                             meta = all_samples_info_split,
+                             FUN= get_feature_counts,
+                             MoreArgs= list(counts_dir = Fcounts_main_dir,
+                                            file_prefix = '', 
+                             overwrite = FALSE),
+                             SIMPLIFY = FALSE) %>%
+  setNames(organs)
+
+
+# get stage deseq2 results for muscle
+muscle_deseq2_stage_res <- list.files('output/mouse_pca_and_deseq2', pattern ='.*muscle_deseq2_results.nice.rds', full.names = TRUE) %>%
+  .[grepl('early|symptomatic|presymptomatic', .)] %>%
+  lapply(.,FUN = readRDS)
+
+
+# mouse feature data
+mouse_feature_meta <- get_feature_data(rownames(all_FC_counts_list[[1]]), 
+                                       symbols = 'mgi_symbol', 
+                                       mart_dataset = 'mmusculus_gene_ensembl', 
+                                       species= 'mouse', 
+                                       out_dir = 'data/metadata', 
+                                       overwrite = FALSE)
+```
+
+```{r outputs}
+out_dir <- 'output/wgcna/'
+# module gene table
+module_gene_table_f <- file.path(out_dir, 'all_organs_module_genes.xlsx')
+```
+
+
+```{r get_wgcna_inputs}
+wgcna_inputs <- mapply(counts = all_FC_counts_list,
+                       sample_info = all_samples_info_split, 
+                       file.prefix = c('blood', 'muscle_bacth1', 'spleen'), 
+                       FUN = get_input_for_wgcna, 
+                       MoreArgs=list(
+                         out_dir = out_dir, 
+                         overwrite = FALSE), 
+                       SIMPLIFY = FALSE) %>%
+  setNames(organs)
+```
+
+
+```{r wgcna_power_term_selection}
+power <- c(c(1:10), seq(from = 12, to = 50, by = 2))
+
+all_sfts <- mapply(wgcna_input = wgcna_inputs,
+                   file.prefix = c('blood', 'muscle_bacth1', 'spleen'), 
+                   FUN = pick_soft_threshold, 
+                   MoreArgs = list(power_vec = power, 
+                                   out_dir = out_dir), 
+                   SIMPLIFY = FALSE)
+                  
+# visualization to pick power
+pick_power_plots <- lapply(all_sfts, FUN = make_plot_for_power_selection)
+
+# select soft threshold
+soft_thr <- 4
+```
+
+```{r get_modules}
+#calculate adjacency, TOM and identify modules; this gives initial modules, before merging of similar modules
+all_organs_modules <-  mapply(norm.counts = wgcna_inputs,
+                   file.prefix = c('blood', 'muscle_bacth1', 'spleen'), 
+                   FUN =adj_tom_cluster, 
+                   MoreArgs = list(thr = soft_thr, 
+                                   out_dir = out_dir), 
+                   SIMPLIFY = FALSE)
+
+# merge similar modules (if there are more than n modules, merge modules whose expression profiles are very similar)
+
+all_organs_final_modules_and_MEs <- mapply(norm.counts = wgcna_inputs,
+                  colors = all_organs_modules, 
+                   file.prefix = c('blood', 'muscle_bacth1', 'spleen'), 
+                   FUN = merge_similar_modules, 
+                   MoreArgs = list(n = 30, 
+                                   out_dir = out_dir, 
+                                   overwrite = TRUE), 
+                   SIMPLIFY = FALSE)
+
+# make a nice table with all module genes (export to excel)
+module_genes_tbl <- mapply(all_organs_final_modules_and_MEs, 
+                           org = c('blood', 'muscle', 'spleen') , 
+                           FUN=function(x, org){
+                             data.frame(module = x$moduleColors, 
+                                        ensembl_gene_id = names(x$moduleColors), 
+                                        organ =org) %>% 
+                               as_tibble() %>%
+                               merge(., mouse_feature_meta, by = 'ensembl_gene_id', all.x = TRUE, all.y = FALSE) %>%
+                               dplyr::select(ensembl_gene_id, gene_symbol, module, organ) %>%
+                               arrange(module)
+                           }, SIMPLIFY = FALSE)
+
+openxlsx::write.xlsx(module_genes_tbl, module_gene_table_f)
+
+
+```
+
+```{r}
+
+```
+
+
+
