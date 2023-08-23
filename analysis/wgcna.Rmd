@@ -185,9 +185,6 @@ mapply(l = all_legends, f_prefix = c('blood', 'muscle_bacth1', 'spleen'),
                 l, width = 1, height = 3)
        }, SIMPLIFY = FALSE)
 
-
-
-
 ```
 
 

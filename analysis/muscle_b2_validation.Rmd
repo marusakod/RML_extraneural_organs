@@ -1,0 +1,194 @@
+---
+title: "muscle validation batch analysis"
+author: "Marusa Koderman"
+date: '2023-08-06'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(gridExtra)
+library(ggpubr)
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r inputs}
+
+muscle_batch2_info <- read.xlsx('data/metadata/muscle_validation_batch.xlsx')
+muscle_batch2_info$wpi <- paste(muscle_batch2_info$wpi, 'wpi')
+muscle_batch2_info$wpi <- gsub("term wpi", 'terminal', muscle_batch2_info$wpi) %>%
+  factor(., levels = c('4 wpi', '8 wpi', '12 wpi', '14 wpi', '16 wpi', '18 wpi', '20 wpi','terminal')) 
+
+muscle_batch2_info <- muscle_batch2_info %>% mutate(stage = case_when(wpi %in% c('4 wpi', '8 wpi') ~ 'early', 
+                                                                  wpi %in% c('12 wpi', '14 wpi', '16 wpi') ~ 'presymptomatic', 
+                                                                  TRUE ~ 'symptomatic')) %>% as.data.frame()
+
+
+muscle_batch2_info$stage <- factor(muscle_batch2_info$stage, levels = c('early', 'presymptomatic', 'symptomatic'))
+
+rownames(muscle_batch2_info) <- muscle_batch2_info$SampleID
+
+# exclude sample PB-28_muscle
+
+muscle_batch2_info  <- muscle_batch2_info %>% filter(SampleID != 'PB-28_muscle')
+
+Fcounts_main_dir <- 'data/FeatureCounts'
+
+# muscle batch1 wgcna input and modules
+
+b1_wgcna_input <- readRDS('output/wgcna/muscle_bacth1_wgcna_input_data.rds')
+b1_wgcna_modules <- readRDS('output/wgcna/muscle_bacth1_final_modules_and_MEs.rds')
+```
+
+
+```{r output}
+module_preservation_plot <- 'output/wgcna/muscle_b2b1_module_pres_plot.svg'
+```
+
+
+```{r get_counts}
+muscle_batch2_counts <- get_feature_counts(organ = 'muscle_batch2',
+                                           file_prefix = '', 
+                                           meta = muscle_batch2_info, 
+                                           counts_dir = Fcounts_main_dir, 
+                                           overwrite = FALSE) 
+```
+
+
+```{r do_per_stage_pca}
+
+b2_info_stage_split <- muscle_batch2_info %>%
+  group_by(stage) %>%
+   group_split() %>%
+   setNames(lapply(., function(x) unique(x$stage))) %>%
+  # add rownames
+  lapply(., function(x){
+    x <-as.data.frame(x)
+    rownames(x) <- x$SampleID
+    return(x)})
+
+all_counts_stage_split <- lapply(b2_info_stage_split, FUN = function(x){
+  muscle_batch2_counts[, x$SampleID]
+})
+
+stage_pcas <- lapply(all_counts_stage_split, FUN = do_pca)
+pcas_dfs_stage <- mapply(b2_info_stage_split, stage_pcas,FUN = get_pca_meta_df, SIMPLIFY = FALSE) 
+
+stage_pca_plots <- lapply(pcas_dfs_stage, make_stage_pca)
+stage_p_for_legend <- make_stage_pca(pcas_dfs_stage[[1]],
+                                     legend.pos = 'bottom')
+
+stages_pca_legend <- ggpubr::get_legend(stage_p_for_legend)
+do.call('grid.arrange', c(stage_pca_plots, ncol = 3))
+
+```
+
+```{r calc_b2_module_preservation}
+
+# subset genes in b2 matrix to match the counts in b1 matrix
+b2_wgcna_input <- muscle_batch2_counts[colnames(b1_wgcna_input), ] %>%
+  vst() %>%
+  t()
+  
+# calculate network preservation with batch2 data 
+muscle_b2_module_pres <- get_module_pres(b1_wgcna_input, b2_input =b2_wgcna_input,
+                                         b1_modules =b1_wgcna_modules,
+                                         out_dir = 'output/wgcna', 
+                                         file.prefix = 'muscle_b2b1', overwrite = FALSE)
+
+# extract z-scores
+ref = 1
+test = 2
+ind = 1
+
+b2b1_zstats <- muscle_b2_module_pres$preservation$Z[[ref]][[test]] %>% rownames_to_column("module")
+```
+
+```{r make_module_pres_plot}
+plot_breaks <- data.frame(start = c(-Inf, 1.96), 
+                          end = c(1.96, Inf), 
+                          colors = factor(1:2))
+
+# plot module preservation summary scores
+```
+
+
+```{r make_module_pres_plot}
+z_score_plot_module_preservation <- ggplot() +
+  theme_light() +
+  geom_rect(data = plot_breaks,
+            aes(xmin = -Inf,
+                xmax = Inf,
+                ymin = start,
+                ymax = end,
+                fill = colors), alpha = 0.2) +
+  scale_fill_manual(values = c("grey", "white"), breaks = c(1, 2)) +
+  new_scale_fill() +
+  geom_point(data = b2b1_zstats, 
+             aes(fill = module, x = moduleSize, y = Zsummary.pres), 
+             size = 2.5, 
+             shape = 21, 
+             color = "darkgrey", 
+             
+             
+             inherit.aes = FALSE) +
+  scale_fill_manual(values = unique(b2b1_zstats$module), 
+                    breaks = unique(b2b1_zstats$module)) +
+  #facet_wrap(~wpi, ncol = 5, scales = "free")+
+  
+  labs(x = "Module size", y = "Preservation Z-summary", color = NULL) +
+  theme(legend.position = "none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.title = element_text(size = 9), 
+        axis.text = element_text(size = 8)
+        ) +
+  
+  geom_hline(yintercept = 1.96, linetype = "solid", linewidth = 0.1) 
+
+```
+
+```{r calc_MEs_for_b2}
+b2_final_modules_and_MEs <- merge_similar_modules(norm.counts = b2_wgcna_input, 
+                                                  colors = b1_wgcna_modules$moduleColors, 
+                                                  n = 50, 
+                                                  out_dir = 'output/wgcna', 
+                                                  file.prefix = 'muscle_batch2', 
+                                                  overwrite = FALSE)
+
+# merge with metadata
+b2_meta_w_MEs <- merge_MEs_and_meta(MEs = b2_final_modules_and_MEs$moduleMEs, meta = muscle_batch2_info)
+```
+
+```{r test_ME_significance}
+b2_ME_signif <- all_modules_ME_signif(b2_meta_w_MEs)
+```
+
+
+```{r get_ME_heat_for_b2}
+b2_ME_signif_heat_no_leg <- make_ME_signif_heatmap(b2_ME_signif, legend = 'none')
+b2_ME_signif_leg <- make_ME_signif_heatmap(b2_ME_signif, legend = 'inplot')
+
+ggsave(file.path('output/wgcna',
+                 "muscle_b2_ME_signif_heatmap.svg"), 
+       b2_ME_signif_heat_no_leg, width = 2.3, height = 6.5)
+
+# save legend
+ggsave(file.path('output/wgcna',
+                  'muscle_b2_ME_signif_heat_legend.svg'), 
+      ggpubr::get_legend(b2_ME_signif_leg),
+      width = 1, height = 3)
+```
+
+```{r write_outputs}
+ggsave(module_preservation_plot, z_score_plot_module_preservation, width = 3, height = 3)
+
+```
+
+
+
+
+
+
+

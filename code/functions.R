@@ -88,7 +88,7 @@ get_feature_data <- function(ensembl_vec, symbols, mart_dataset, species, out_di
 
 # get counts in metadata
 
-extract_group_counts <- function(organ, meta){
+extract_group_counts <- function(organ, meta, counts){
 
   all_c <- all_FC_counts_list[[organ]]
   sub <- all_c[, meta$SampleID]
@@ -905,6 +905,35 @@ make_ME_signif_heatmap <- function(ME_signif_df, legend = 'none'){
 
    return(p)
 
+
+}
+
+
+# calculate module preservation scores
+get_module_pres <- function(b1_input, b2_input, b1_modules, out_dir, file.prefix, overwrite = FALSE){
+
+  f <- file.path(out_dir, paste0(file.prefix, '_module_preservation_stats.rds'))
+
+  if(file.exists(f) & overwrite == FALSE){
+    readRDS(f)
+  }else{
+
+    setLabels <- c("Batch1", "Batch2")
+    multiExpr  = list(Batch1 = list(data = b1_input), Batch2 = list(data = b2_input))
+    multiColor = list(Batch1 = b1_modules$moduleColors, Batch2 = b1_modules$moduleColors)
+
+    enableWGCNAThreads(nThreads = 30)
+
+    mp <- modulePreservation(multiExpr,
+                             multiColor,
+                             referenceNetworks = c(1,2),
+                             nPermutations = 1000,
+                             randomSeed = 1,
+                             parallelCalculation = TRUE)
+    saveRDS(mp, f)
+    return(mp)
+
+  }
 
 }
 
