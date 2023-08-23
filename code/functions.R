@@ -809,6 +809,122 @@ merge_similar_modules <- function(norm.counts, colors, n,
 
 }
 
+merge_MEs_and_meta <- function(MEs, meta){
+
+  MEs_trans <- MEs %>% rownames_to_column('SampleID') %>%
+    merge(., meta, by = 'SampleID')
+
+  return(MEs_trans)
+}
+
+
+Treatment_ME_corr_signif <- function(module, meta){ # module name with and ME prefix e.i. MEorange
+
+  ME <- meta[, c(module, "stage", "Treatment")] %>% group_by(stage, Treatment)
+
+  signif <- sapply(X = unique(ME$stage), FUN = function(x){
+    stage_ME <- ME %>% filter(stage == x)
+    stage_ME <- as.data.frame(stage_ME[, c(module, "Treatment")])
+    stage_ME$Treatment <- factor(stage_ME$Treatment, levels = c("RML6", "NBH"))
+    res.wilcox <- wilcox.test(get(module) ~ Treatment, data = stage_ME, exact = TRUE)
+    pval <- res.wilcox$p.value
+    stat <- res.wilcox$statistic
+    stat_type <- "W"
+
+
+    final_df <- data.frame(stat = stat, pval = pval, stat_type = stat_type, stage = x, module = module)
+
+  },
+  simplify  = TRUE)
+
+  signif <- as.data.frame(t(signif)) %>% remove_rownames() %>% mutate(signif_label = case_when(pval > 0.05 ~ "ns",
+                                                                                               pval <= 0.05 & pval > 0.01 ~ "*",
+                                                                                               pval <= 0.01 & pval > 0.001 ~
+                                                                                                 "**",
+                                                                                               pval <= 0.001 & pval > 0.0001 ~
+                                                                                                 "***",
+                                                                                               TRUE ~ "****"))
+
+  signif$stage <- unlist(signif$stage)
+  signif$module <- as.character(signif$module)
+  signif$module <- gsub("ME", "", signif$module)
+  signif$pval <- as.double(signif$pval)
+  signif$stat <- as.double(signif$stat)
+  signif$stat_type <- as.character(signif$stat_type)
+  signif$heatmap_label <- gsub("ns", "", signif$signif_label)
+
+  return(signif)
+
+}
+
+
+all_modules_ME_signif <- function(meta_w_MEs){ #
+
+  # extract all module names (with ME prefix)
+  all_modules <- colnames(meta_w_MEs) %>%
+    .[grepl('^ME.*', .)]
+
+  out <- lapply(all_modules, FUN = Treatment_ME_corr_signif, meta = meta_w_MEs) %>%
+    bind_rows()
+  return(out)
+
+}
+
+
+
+# make a heatmap that shows ME significance
+make_ME_signif_heatmap <- function(ME_signif_df, legend = 'none'){
+
+   p <-   pvals_heatmap <- ggplot(ME_signif_df %>% filter(module != "grey"),
+                          aes(x = stage, y = module, fill = -log10(pval))) + # leave out the grey module with unassigned genes
+
+    geom_tile() +
+    theme_minimal() +
+    labs(x = NULL, y = NULL, fill = bquote(-Log[10]*(p-value))) +
+    theme(panel.grid.major = element_blank(),
+          #panel.spacing = unit(0, "mm"),
+          #strip.text.y.left = element_text(angle = 0),
+          panel.grid.minor = element_blank(),
+          axis.text.x = element_text(size = 9),
+          axis.text.y = element_text(color = "black", size = 8),
+          axis.ticks.y = element_blank()) +
+    scico::scale_fill_scico(palette = "devon", direction = -1) +
+    geom_text(aes(label = heatmap_label, color = heatmap_label), size = 4, vjust = 0.7) +
+    scale_color_manual(values = c("white", "black", "black", "white", "white"), breaks = c("**", "" ,"*", "***", "****"), guide = "none")
+
+  if(legend == 'none'){
+    p <- p + theme(legend.position = 'none')
+  }else{
+    p <- p + theme(legend.position = "right",
+                   legend.direction = "vertical",
+                   legend.title = element_text(size = 9),
+                   axis.text.x = element_text(size = 9),
+                   legend.key.height = unit(0.5, "cm"),
+                   legend.key.width = unit(0.3, "cm"))
+  }
+
+   return(p)
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # info_for_organ <- function(organ, Batch){
 #
@@ -986,124 +1102,6 @@ merge_similar_modules <- function(norm.counts, colors, n,
   # }
 
 
-
-#########################################
-
-
-
-##########################################
-
-merge_MEs_and_sample_info <- function(MEs, info){
-
-  info_and_MEs <- cbind(MEs, info)
-
-  info_and_MEs$wpi <- factor(info_and_MEs$wpi, levels = c("4", "8", "12", "14", "16", "18", "20", "term"))
-  info_and_MEs <- info_and_MEs %>% mutate(disease_stage_2 = case_when(wpi %in% c("4", "8") ~ "early",
-                                                                      wpi %in% c("12", "14", "16") ~ "presymptomatic",
-                                                                      TRUE ~ "symptomatic"))
-
-  info_and_MEs
-
-}
-
-
-########################################
-
-
-Treatment_ME_corr_signif <- function(module, info_and_MEs){ # module name with and ME prefix e.i. MEorange
-
-  ME <-info_and_MEs[, c(module, "disease_stage_2", "Treatment")] %>% group_by(disease_stage_2, Treatment)
-
-  # # test if ME values are normally distributed in both groups
-  # ME_split <- group_split(ME)
-  # shapiro_pvals <- sapply(ME_split, FUN = function(x){
-  #   name <- paste(unique(x$disease_stage_2), unique(x$Treatment), sep = "_")
-  #   res <- shapiro.test(x[,1] %>% flatten_dbl())
-  #   p <- res$p.value
-  #   names(p) <- name
-  #   return(p)
-  # },
-  # simplify = TRUE)
-  #
-  # shapiro_pvals_df <- data.frame(disease_stage_2 = str_before_first(names(shapiro_pvals), pattern = "_"),
-  #                                Treatment = str_after_first(names(shapiro_pvals), pattern = "_"),
-  #                                shapiro.pval = shapiro_pvals)
-  #
-  #
-  # all_dists <- c()
-  #
-  # for(i in unique(shapiro_pvals_df$disease_stage_2)){
-  #  shaps <-  shapiro_pvals_df %>% filter(disease_stage_2 == i) %>% dplyr::select(shapiro.pval) %>% flatten_dbl()
-  #  shaps_normal <- shaps > 0.05
-  #  if(sum(shaps_normal) == 2){
-  #    dist <- "normal"
-  #  }else{
-  #    dist <- "notNormal"
-  #  }
-  #   all_dists[i] <- dist
-  # }
-  #
-  # # calculate significnce betwen groups using a t-test if a distribution is normal or a Mann Whitney U if the distribution is
-# not normal
-
-  signif <- sapply(X = unique(ME$disease_stage_2), FUN = function(x){
-    stage_ME <- ME %>% filter(disease_stage_2 == x)
-    stage_ME <- as.data.frame(stage_ME[, c(module, "Treatment")])
-    stage_ME$Treatment <- factor(stage_ME$Treatment, levels = c("RML6", "NBH"))
-    #
-    #   if(y == "normal"){
-    #     # test homogeneity of variances
-    #
-    #     res.ftest <- var.test(get(module) ~ Treatment, data = stage_ME)
-    #     ftest.pval <- res.ftest$p.value
-    #
-    #     if(ftest.pval > 0.05){ # use a classic t-test which assumes equality of the 2 variances
-    #
-    #     res.ttest <- t.test(get(module) ~ Treatment, data = stage_ME, var.equal = TRUE)
-    #     pval <- res.ttest$p.value
-    #     stat <- res.ttest$statistic
-    #     stat_type <- "t"
-    #     }else{
-    #     res.ttest <- t.test(get(module) ~ Treatment, data = stage_ME, var.equal = FALSE)
-    #     pval <- res.ttest$p.value
-    #     stat <- res.ttest$statistic
-    #     stat_type <- "t"
-    #     }
-    #
-    #
-    #   }else{
-    res.wilcox <- wilcox.test(get(module) ~ Treatment, data = stage_ME, exact = TRUE)
-    pval <- res.wilcox$p.value
-    stat <- res.wilcox$statistic
-    stat_type <- "W"
-
-
-    final_df <- data.frame(stat = stat, pval = pval, stat_type = stat_type, disease_stage_2 = x, module = module)
-
-  },
-  simplify  = TRUE)
-
-  signif <- as.data.frame(t(signif)) %>% remove_rownames() %>% mutate(signif_label = case_when(pval > 0.05 ~ "ns",
-                                                                                               pval <= 0.05 & pval > 0.01 ~ "*",
-                                                                                               pval <= 0.01 & pval > 0.001 ~
-"**",
-                                                                                               pval <= 0.001 & pval > 0.0001 ~
-"***",
-                                                                                               TRUE ~ "****"))
-
-  signif$disease_stage_2 <- as.character(signif$disease_stage_2)
-  signif$module <- as.character(signif$module)
-  signif$module <- gsub("ME", "", signif$module)
-  signif$pval <- as.double(signif$pval)
-  signif$stat <- as.double(signif$stat)
-  signif$stat_type <- as.character(signif$stat_type)
-  signif$heatmap_label <- gsub("ns", "", signif$signif_label)
-
-  signif
-
-
-
-}
 
 
 #############################################

@@ -69,7 +69,7 @@ mouse_feature_meta <- get_feature_data(rownames(all_FC_counts_list[[1]]),
 ```
 
 ```{r outputs}
-out_dir <- 'output/wgcna/'
+out_dir <- 'output/wgcna'
 # module gene table
 module_gene_table_f <- file.path(out_dir, 'all_organs_module_genes.xlsx')
 ```
@@ -122,7 +122,7 @@ all_organs_final_modules_and_MEs <- mapply(norm.counts = wgcna_inputs,
                    FUN = merge_similar_modules, 
                    MoreArgs = list(n = 30, 
                                    out_dir = out_dir, 
-                                   overwrite = TRUE), 
+                                   overwrite = FALSE), 
                    SIMPLIFY = FALSE)
 
 # make a nice table with all module genes (export to excel)
@@ -138,14 +138,59 @@ module_genes_tbl <- mapply(all_organs_final_modules_and_MEs,
                                arrange(module)
                            }, SIMPLIFY = FALSE)
 
-openxlsx::write.xlsx(module_genes_tbl, module_gene_table_f)
+# openxlsx::write.xlsx(module_genes_tbl, module_gene_table_f)
+```
+
+```{r merge_MEs_w_meta}
+
+meta_w_MEs <- mapply(modules = all_organs_final_modules_and_MEs, 
+                     meta = all_samples_info_split, 
+                     FUN = function(modules,meta){
+                       MEs <- modules$moduleMEs
+                       merge_MEs_and_meta(MEs = MEs, meta = meta)
+                     }, SIMPLIFY = FALSE)
+
+```
+
+```{r get_ME_signif}
+all_ME_signif <- lapply(meta_w_MEs, FUN = all_modules_ME_signif)
+```
+
+```{r get_ME_signif_heats}
+
+# get heatmaps that show significant modules in each organ (Supplementary figure 2)
+ME_signif_heatmaps_no_leg <- lapply(all_ME_signif, FUN = make_ME_signif_heatmap, legend = 'none')
+ME_signif_heatmaps_leg <- lapply(all_ME_signif, FUN = make_ME_signif_heatmap, legend = 'inplot')
+
+# save all plots without legends as svg
+ggsave(file.path(out_dir,
+                 "muscle_b1_ME_signif_heatmap.svg"), 
+       ME_signif_heatmaps_no_leg$muscle, width = 2.3, height = 6.5)
+
+ggsave(file.path(out_dir,
+                 "blood_ME_signif_heatmap.svg"), 
+       ME_signif_heatmaps_no_leg$blood, width = 2.3, height = 4.7)
+
+ggsave(file.path(out_dir,
+                 "spleen_ME_signif_heatmap.svg"), 
+       ME_signif_heatmaps_no_leg$spleen, width = 2.3, height = 3)
+
+
+
+# save all legends as svg
+all_legends <- lapply(ME_signif_heatmaps_leg, FUN = ggpubr::get_legend)
+mapply(l = all_legends, f_prefix = c('blood', 'muscle_bacth1', 'spleen'), 
+       FUN = function(l, f_prefix){
+         ggsave(file.path(out_dir, paste0(f_prefix, '_ME_signif_heat_legend.svg')), 
+                l, width = 1, height = 3)
+       }, SIMPLIFY = FALSE)
+
+
 
 
 ```
 
-```{r}
 
-```
 
 
 
