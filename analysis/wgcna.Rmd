@@ -72,6 +72,18 @@ mouse_feature_meta <- get_feature_data(rownames(all_FC_counts_list[[1]]),
 out_dir <- 'output/wgcna'
 # module gene table
 module_gene_table_f <- file.path(out_dir, 'all_organs_module_genes.xlsx')
+
+# file with module membershih and per stage deseq2 p-values for darkgreen and orange module
+orange_darkgreen_MM_GS_f <- file.path(out_dir, 'orange_darkgreen_MM_GS.csv')
+
+# files for gephi
+
+orange_gephi_nodelist = file.path(out_dir, 'orange_module_gephi_nodelist.csv')
+darkgreen_gephi_nodelist = file.path(out_dir, 'darkgreen_module_gephi_nodelist.csv')
+
+orange_gephi_edgelist = file.path(out_dir, 'orange_module_gephi_edgelist.csv')
+darkgreen_gephi_edgelist = file.path(out_dir, 'darkgreen_module_gephi_edgelist.csv')
+
 ```
 
 
@@ -138,7 +150,7 @@ module_genes_tbl <- mapply(all_organs_final_modules_and_MEs,
                                arrange(module)
                            }, SIMPLIFY = FALSE)
 
-# openxlsx::write.xlsx(module_genes_tbl, module_gene_table_f)
+
 ```
 
 ```{r merge_MEs_w_meta}
@@ -162,6 +174,87 @@ all_ME_signif <- lapply(meta_w_MEs, FUN = all_modules_ME_signif)
 ME_signif_heatmaps_no_leg <- lapply(all_ME_signif, FUN = make_ME_signif_heatmap, legend = 'none')
 ME_signif_heatmaps_leg <- lapply(all_ME_signif, FUN = make_ME_signif_heatmap, legend = 'inplot')
 
+```
+
+
+```{r get_hubs}
+# get module membership for muscle darkgreen and orange module
+muscle_MMs = get_moduleMembership(module_df = module_genes_tbl$muscle,
+                                  MEs_ls = all_organs_final_modules_and_MEs$muscle,
+                                  norm.counts = wgcna_inputs$muscle) %>%
+  filter(module %in% c('orange', 'darkgreen'))
+
+```
+
+```{r run_stage_DESEQ2}
+
+muscle_info_stage_split <- all_samples_info %>%
+  filter(Region == 'muscle') %>%
+  mutate(Condition = paste(Treatment, stage, sep = '_'))
+
+rownames(muscle_info_stage_split) = muscle_info_stage_split$SampleID
+
+  muscle_stage_dds <- DESeqDataSetFromMatrix(countData = all_FC_counts_list$muscle,
+                                             colData = muscle_info_stage_split,
+                                             design = ~Condition)
+  # keep genes that were used for wgcna
+  # dds_keep <- rowSums(counts(muscle_stage_dds)) >= 10
+  muscle_stage_dds <- muscle_stage_dds[colnames(wgcna_inputs$muscle), ]
+
+  # get results
+
+  muscle_stage_dds <- DESeq(muscle_stage_dds)
+  m_early_deseq_res = results(muscle_stage_dds, contrast = c('Condition', 'RML6_early', 'NBH_early')) 
+  
+  m_pre_deseq_res = results(muscle_stage_dds, contrast = c('Condition', "RML6_presymptomatic", "NBH_presymptomatic")) 
+
+  m_sym_deseq_res = results(muscle_stage_dds, contrast = c('Condition', "RML6_symptomatic","NBH_symptomatic")) 
+
+
+  # make results nicer
+  muscle_stage_deseq_nice_res = mapply(res = list(m_early_deseq_res, 
+                                                  m_pre_deseq_res,
+                                                  m_sym_deseq_res), 
+         st = c('early', 'presymptomatic', 'symptomatic'), 
+        FUN = function(res, st){
+            
+    res %>%
+    as.data.frame() %>%
+    rownames_to_column('ensembl_gene_id') %>%
+    dplyr::select(ensembl_gene_id, pvalue, log2FoldChange) %>%
+    mutate(stage = st) %>%
+    filter(ensembl_gene_id %in% muscle_MMs$ensembl_gene_id)
+    
+ }, SIMPLIFY = FALSE) %>%
+    setNames(c('early', 'presymptomatic', 'symptomatic'))
+  
+```
+
+```{r get_combined_deseq_score}
+
+muscle_deseq2_sum = metapod::combineParallelPValues(list(muscle_stage_deseq_nice_res$early$pvalue, 
+                      muscle_stage_deseq_nice_res$presymptomatic$pvalue, 
+                      muscle_stage_deseq_nice_res$symptomatic$pvalue), 
+                      method = "stouffer") 
+
+muscle_deseq2_sum_df = data.frame(deseq2_sum.pval = muscle_deseq2_sum$p.value, 
+                                  ensembl_gene_id = muscle_stage_deseq_nice_res$early$ensembl_gene_id)
+
+```
+
+
+```{r merge_MM_and_sum_deseq}
+muscle_MM_sum_deseq_merged = merge(muscle_MMs, muscle_deseq2_sum_df, by ='ensembl_gene_id')
+
+# make scatterplots
+orange_MM_deseq2_pval_plot = make_MM_deseq2_corr_plot(muscle_MM_sum_deseq_merged %>% filter(module == 'orange'))
+darkgreen_MM_deseq2_pval_plot = make_MM_deseq2_corr_plot(muscle_MM_sum_deseq_merged %>% filter(module == 'darkgreen'))                         
+```
+
+
+```{r export_plots}
+# module significance heatmaps
+
 # save all plots without legends as svg
 ggsave(file.path(out_dir,
                  "muscle_b1_ME_signif_heatmap.svg"), 
@@ -177,6 +270,7 @@ ggsave(file.path(out_dir,
 
 
 
+
 # save all legends as svg
 all_legends <- lapply(ME_signif_heatmaps_leg, FUN = ggpubr::get_legend)
 mapply(l = all_legends, f_prefix = c('blood', 'muscle_bacth1', 'spleen'), 
@@ -185,7 +279,53 @@ mapply(l = all_legends, f_prefix = c('blood', 'muscle_bacth1', 'spleen'),
                 l, width = 1, height = 3)
        }, SIMPLIFY = FALSE)
 
+
+# MM and GS correlation plots
+ggsave(file.path(out_dir, "orange_MM_GS_corr_plot.svg"), orange_MM_deseq2_pval_plot, width = 2.5, height = 2)
+ggsave(file.path(out_dir, "darkgreen_MS_GS_corr_plot.svg"), darkgreen_MM_deseq2_pval_plot, width = 2.5, height = 2)
+
+
+
 ```
+
+
+```{r get_gephi_files}
+
+orange_gephi = get_files_for_gephi(wgcna_inputs$muscle,
+                                   thr = 4,
+                                   genes_df = muscle_MM_sum_deseq_merged,
+                                   module_name = 'orange',
+                                   nodelist_f = orange_gephi_nodelist,
+                                   edgelist_f = orange_gephi_edgelist,
+                                   overwrite = TRUE)
+
+
+darkgreen_gephi = get_files_for_gephi(wgcna_inputs$muscle,
+                                      thr = 4,
+                                      genes_df = muscle_MM_sum_deseq_merged,
+                                      module_name = 'darkgreen',
+                                      nodelist_f = darkgreen_gephi_nodelist,
+                                      edgelist_f = darkgreen_gephi_edgelist,
+                                      overwrite = TRUE)
+
+```
+
+
+```{r export_files}
+
+openxlsx::write.xlsx(module_genes_tbl, module_gene_table_f)
+write.csv(muscle_MM_sum_deseq_merged, orange_darkgreen_MM_GS_f, row.names = FALSE, quote = FALSE)
+
+
+
+```
+
+
+
+
+
+
+
 
 
 

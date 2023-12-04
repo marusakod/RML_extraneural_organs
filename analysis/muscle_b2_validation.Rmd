@@ -39,6 +39,12 @@ Fcounts_main_dir <- 'data/FeatureCounts'
 
 b1_wgcna_input <- readRDS('output/wgcna/muscle_bacth1_wgcna_input_data.rds')
 b1_wgcna_modules <- readRDS('output/wgcna/muscle_bacth1_final_modules_and_MEs.rds')
+
+# get table with all module genes 
+b1_wgcna_module_df <- openxlsx::read.xlsx('output/wgcna/all_organs_module_genes.xlsx', sheet = 'muscle')
+
+# get hub stats for muscle batch1
+b1_hub_stats <- read.csv('output/wgcna/orange_darkgreen_MM_GS.csv')
 ```
 
 
@@ -110,11 +116,6 @@ plot_breaks <- data.frame(start = c(-Inf, 1.96),
                           end = c(1.96, Inf), 
                           colors = factor(1:2))
 
-# plot module preservation summary scores
-```
-
-
-```{r make_module_pres_plot}
 z_score_plot_module_preservation <- ggplot() +
   theme_light() +
   geom_rect(data = plot_breaks,
@@ -169,7 +170,113 @@ b2_ME_signif <- all_modules_ME_signif(b2_meta_w_MEs)
 ```{r get_ME_heat_for_b2}
 b2_ME_signif_heat_no_leg <- make_ME_signif_heatmap(b2_ME_signif, legend = 'none')
 b2_ME_signif_leg <- make_ME_signif_heatmap(b2_ME_signif, legend = 'inplot')
+```
 
+```{r get_hubs}
+
+m_b2_MMs = get_moduleMembership(module_df = b1_wgcna_module_df, 
+                                MEs_ls = b2_final_modules_and_MEs, 
+                                norm.counts = b2_wgcna_input) %>%
+  dplyr::rename(MM.pval_b2 = MM.pval) %>%
+    filter(module %in% c('orange', 'darkgreen'))
+
+
+```
+
+```{r run_stage_DESEQ2}
+
+m_b2_info_stage_split <- muscle_batch2_info %>%
+  mutate(Condition = paste(Treatment, stage, sep = '_'))
+
+rownames(m_b2_info_stage_split) = m_b2_info_stage_split$SampleID
+
+
+  m_b2_stage_dds <- DESeqDataSetFromMatrix(countData = muscle_batch2_counts,
+                                             colData = m_b2_info_stage_split,
+                                             design = ~Condition)
+  # keep genes used for WGNCA
+  # dds_keep <- rowSums(counts(m_b2_stage_dds )) >= 10
+  m_b2_stage_dds <- m_b2_stage_dds[colnames(b2_wgcna_input), ]
+
+  # get results
+
+ m_b2_stage_dds  <- DESeq(m_b2_stage_dds)
+ m_b2_early_deseq_res = results(m_b2_stage_dds , contrast = c('Condition', 'RML6_early', 'NBH_early')) 
+  
+  m_b2_pre_deseq_res = results(m_b2_stage_dds , contrast = c('Condition', "RML6_presymptomatic", "NBH_presymptomatic")) 
+
+  m_b2_sym_deseq_res = results(m_b2_stage_dds , contrast = c('Condition', "RML6_symptomatic","NBH_symptomatic")) 
+
+
+  # make results nicer
+  m_b2_stage_deseq_nice_res = mapply(res = list(m_b2_early_deseq_res, 
+                                                  m_b2_pre_deseq_res,
+                                                  m_b2_sym_deseq_res), 
+         st = c('early', 'presymptomatic', 'symptomatic'), 
+        FUN = function(res, st){
+            
+    res %>%
+    as.data.frame() %>%
+    rownames_to_column('ensembl_gene_id') %>%
+    dplyr::select(ensembl_gene_id, pvalue, log2FoldChange) %>%
+    mutate(stage = st) %>%
+    filter(ensembl_gene_id %in% m_b2_MMs$ensembl_gene_id)
+    
+ }, SIMPLIFY = FALSE) %>%
+    setNames(c('early', 'presymptomatic', 'symptomatic'))
+
+
+```
+
+```{r get_combined_deseq_score}
+
+m_b2_deseq2_sum = metapod::combineParallelPValues(list(m_b2_stage_deseq_nice_res$early$pvalue, 
+                      m_b2_stage_deseq_nice_res$presymptomatic$pvalue, 
+                      m_b2_stage_deseq_nice_res$symptomatic$pvalue), 
+                      method = "stouffer") 
+
+m_b2_deseq2_sum_df = data.frame(deseq2_sum.pval = m_b2_deseq2_sum$p.value, 
+                                ensembl_gene_id = m_b2_stage_deseq_nice_res$early$ensembl_gene_id) 
+
+```
+
+
+```{r check_MM_corr_w_b1}
+
+# merge b1 and b2 hub stats
+m_b1_b2_hub_stats_merged = merge(m_b2_MMs, b1_hub_stats, by = c('ensembl_gene_id', 'gene_symbol', 'organ', 'module')) %>%
+  group_by(module) %>%
+  arrange(MM.pval) %>%
+  mutate(
+    is.hub_b1_MM = row_number() <= 20
+  ) %>%
+  arrange(MM.pval_b2) %>%
+  mutate(
+    is.hub_b2_MM = row_number() <= 20
+  ) %>%
+  ungroup()
+
+```
+
+```{r make_b1_b2_MM_corr_plot}
+
+MM_corr_orange_p = make_b1_b1_MM_corr_plot(m_b1_b2_hub_stats_merged %>% filter(module == 'orange'),
+                                              x = 'MM.pval', y = 'MM.pval_b2',hubx = 'is.hub_b1_MM', huby = 'is.hub_b2_MM', module_name = 'orange')
+
+
+
+MM_corr_darkgreen_p = make_b1_b1_MM_corr_plot(m_b1_b2_hub_stats_merged %>% filter(module == 'darkgreen'),
+                                              x = 'MM.pval', y = 'MM.pval_b2',hubx = 'is.hub_b1_MM', huby = 'is.hub_b2_MM', module_name = 'darkgreen')
+
+
+```
+
+
+```{r export plots}
+# module preservation score plot
+ggsave(module_preservation_plot, z_score_plot_module_preservation, width = 3, height = 3)
+
+# module significance heatmaps
 ggsave(file.path('output/wgcna',
                  "muscle_b2_ME_signif_heatmap.svg"), 
        b2_ME_signif_heat_no_leg, width = 2.3, height = 6.5)
@@ -179,10 +286,11 @@ ggsave(file.path('output/wgcna',
                   'muscle_b2_ME_signif_heat_legend.svg'), 
       ggpubr::get_legend(b2_ME_signif_leg),
       width = 1, height = 3)
-```
 
-```{r write_outputs}
-ggsave(module_preservation_plot, z_score_plot_module_preservation, width = 3, height = 3)
+
+# MM correlations b1 and b2
+ggsave(file.path(out_dir, "orange_b1_b2_MM_corr_plot.svg"), MM_corr_orange_p, width = 2.5, height = 2.5)
+ggsave(file.path(out_dir, "darkgreen_b1_b2_MM_corr_plot.svg"), MM_corr_darkgreen_p, width = 2.5, height = 2.5)
 
 ```
 

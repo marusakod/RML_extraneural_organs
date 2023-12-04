@@ -14,7 +14,7 @@ library(randomcoloR)
 library(ggnewscale)
 library(testit)
 library(biomaRt)
-library(plotly)
+library(metapod)
 
 get_feature_counts <- function(counts_dir, organ,meta, file_prefix, overwrite = FALSE){
 
@@ -939,6 +939,392 @@ get_module_pres <- function(b1_input, b2_input, b1_modules, out_dir, file.prefix
 
 
 
+get_moduleMembership <- function(module_df, MEs_ls, norm.counts){
+
+
+  module.membership.measure <- cor(MEs_ls$moduleMEs, norm.counts, use = 'p')
+  module.membership.measure.pvals <- corPvalueStudent(module.membership.measure, nrow(norm.counts))
+
+  all_module_hubs = vector("list", length = nrow(module.membership.measure.pvals)) %>%
+    setNames(rownames(module.membership.measure.pvals))
+
+  # order the genes based on module membership for each module
+  for(i in rownames(module.membership.measure.pvals)){
+    all_genes = module.membership.measure.pvals[i, ]
+    all_genes = sort(all_genes)
+
+    df = data.frame('ensembl_gene_id' = names(all_genes),
+                    'MM.pval' = all_genes,
+                    'module' = gsub('ME', '', i))
+    rownames(df) <- NULL
+
+    all_module_hubs[[i]] = df
+
+  }
+
+  all_module_hubs = all_module_hubs %>%
+    bind_rows()
+
+  # merge with module dataframe
+  out = merge(module_df, all_module_hubs, by = c('ensembl_gene_id', 'module'), all.x = TRUE, all.y = FALSE) %>%
+    arrange(MM.pval)
+
+  return(out)
+
+
+}
+
+
+
+# plot for showing correlation of gene significance score and module membership
+make_MM_deseq2_corr_plot <- function(df){
+
+  ggplot(df,
+         aes(x = -log10(deseq2_sum.pval),
+             y = -log10(MM.pval))) +
+    geom_point(size = 0.3) +
+    theme_light() +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.text = element_text(size = 8),
+          axis.title = element_text(size = 8),
+          plot.title = element_text(size = 8, face = "bold.italic")
+    ) +
+
+    geom_smooth(method = "lm",
+                color = "#220303",
+                inherit.aes = TRUE,
+                se = TRUE,
+                linewidth = 0.2,
+                fill = "#CCD1D1" ) +
+
+    labs(x = 'Gene significance score',
+         y = bquote(-Log[10]*.("MM")),
+         title = paste(unique(df$module), "module", sep = " ")) +
+
+    ggpubr::stat_cor(p.accuracy = 0.001, size = 3)
+
+}
+
+
+# plot for showing correlation between b1 and b2 gene significance scores
+make_b1_b1_MM_corr_plot <- function(df, x, y, hubx, huby, module_name){
+
+  ggplot() +
+  geom_point(data =df,
+             shape = 21,
+             aes(x = -log10(get(x)),
+                 y = -log10(get(y)),
+                 color = get(huby)),
+             size = 1.5,
+             fill = "white")  +
+  scale_color_manual(values = c("#FDFEFE", "#A569BD"), breaks = c(FALSE, TRUE)) +
+
+  ggnewscale::new_scale_color() +
+
+  geom_point(data = df,
+             aes(x = -log10(get(x)),
+                 y = -log10(get(y)),
+                 color = get(hubx)),
+             size = 0.3) +
+  scale_color_manual(values = c("lightgrey", "#220303"), breaks = c(FALSE, TRUE)) +
+
+
+  theme_light() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(size = 8),
+        # legend.position = "bottom",
+        legend.position = "none",
+        plot.title = element_text(size = 8, face = "bold.italic"),
+        legend.direction = "horizontal",
+        legend.box = "vertical",
+        axis.title = element_text(size = 8)) +
+  labs(x = bquote(-Log[10]*.("MM (main cohort)")),
+       y =  bquote(-Log[10]*.("MM (validation cohort)")),
+       title = module_name
+  ) +
+  ggpubr::stat_cor(p.accuracy = 0.001, inherit.aes = FALSE,
+                   data = df,
+                   aes(x = -log10(get(x)),
+                       y = -log10(get(y))),
+                   size = 3) +
+
+  geom_smooth(method = "lm",
+              color = "#220303",
+              inherit.aes = FALSE,
+              data = df,
+              aes(x = -log10(get(x)),
+                  y = -log10(get(y))),
+              se = TRUE,
+              linewidth = 0.2,
+              fill = "#CCD1D1" )
+}
+
+
+#
+# make_b1_b1_rank_corr_plot <- function(df, x, y, hubx, huby, module_name){
+#
+#   ggplot() +
+#     geom_point(data =df,
+#                shape = 21,
+#                aes(x = get(x),
+#                    y = get(y),
+#                    color = get(huby)),
+#                size = 1.5,
+#                fill = "white")  +
+#     scale_color_manual(values = c("#FDFEFE", "#A569BD"), breaks = c(FALSE, TRUE)) +
+#
+#     ggnewscale::new_scale_color() +
+#
+#     geom_point(data = df,
+#                aes(x = get(x),
+#                    y = get(y),
+#                    color = get(hubx)),
+#                size = 0.3) +
+#     scale_color_manual(values = c("lightgrey", "#220303"), breaks = c(FALSE, TRUE)) +
+#
+#
+#     theme_light() +
+#     theme(panel.grid.major = element_blank(),
+#           panel.grid.minor = element_blank(),
+#           axis.text = element_text(size = 8),
+#           # legend.position = "bottom",
+#           legend.position = "none",
+#           plot.title = element_text(size = 10, face = "bold.italic"),
+#           legend.direction = "horizontal",
+#           legend.box = "vertical",
+#           axis.title = element_text(size = 9)) +
+#     labs(x = "Module gene significance (main cohort)",
+#          y = "Module gene significance (validation cohort)",
+#          title = module_name
+#     ) +
+#     ggpubr::stat_cor(p.accuracy = 0.001, inherit.aes = FALSE,
+#                      data = df,
+#                      aes(x = get(x),
+#                          y = get(y)),
+#                      size = 3) +
+#
+#     geom_smooth(method = "lm",
+#                 color = "#220303",
+#                 inherit.aes = FALSE,
+#                 data = df,
+#                 aes(x = get(x),
+#                     y = get(y)),
+#                 se = TRUE,
+#                 linewidth = 0.2,
+#                 fill = "#CCD1D1" )
+# }
+#
+#
+
+
+# # get ranking of module genes based on per-stage deseq2 results
+# get_combined_pval_rank <- function(deseq2_res){
+#
+#   # check whether genes in the module are predominantly up or down-regulated
+#   dir <- table(deseq2_res$log2FoldChange > 0)
+#   if(dir[2] > dir[1]){
+#     dir_o <- "Upregulated"
+#   }else{
+#     dir_o <- "Downregulated"
+#   }
+#
+#   # add fold change direction to pvalues
+#   deseq2_res = deseq2_res %>%
+#     mutate(log_pval = -log10(deseq2.pval)) %>%
+#     mutate(log_pval_dir = case_when(log2FoldChange >= 0 ~ log_pval,
+#                                        TRUE ~ log_pval*(-1)))
+#
+#   # get ranks in all timepoints
+#   if(dir_o == 'Upregulated'){
+#   deseq2_res_w_ranks = deseq2_res %>%
+#     group_by(stage) %>%
+#     mutate(rank = rank(log_pval_dir))
+#   }else{
+#     deseq2_res_w_ranks = deseq2_res %>%
+#       group_by(stage) %>%
+#       mutate(rank = rank(-log_pval_dir))
+#   }
+#   # combined rank
+#   combn_rank_all_tps = deseq2_res_w_ranks %>%
+#     group_by(ensembl_gene_id) %>%
+#     summarise(rank_sum_all = sum(rank))
+#
+#   combn_rank_later_tps = deseq2_res_w_ranks %>%
+#     filter(stage != 'early') %>%
+#     group_by(ensembl_gene_id) %>%
+#     summarise(rank_sum_last = sum(rank))
+#
+#   combn_rank_merged = merge(combn_rank_all_tps, combn_rank_later_tps, by = 'ensembl_gene_id')
+#
+#   # resolve ties and assign final ranks
+#   combn_rank_merged$final_rank = rank(combn_rank_merged$rank_sum_all)
+#
+#   # get all tied ranks
+#
+#   resolve_ties <- function(tie){
+#     ties_df <- combn_rank_merged %>%
+#       filter(final_rank == tie)
+#
+#     if(nrow(ties_df) == 1){
+#       return(ties_df)
+#     }else{
+#
+#       # get original ranks
+#       ties_n <- nrow(ties_df)
+#
+#       if(ties_n %% 2 == 0){ # if ties_n is an odd number
+#         # get 2 closest integers to a tie
+#         int1 <- floor(tie)
+#         int2 <- ceiling(tie)
+#         # get the number of remaining integers in each direction
+#         remaining_n <- (ties_n - 2)/2
+#         from <- int1 - remaining_n
+#         to <- int2 + remaining_n
+#         original_ranks <- c(from:to)
+#       }else{
+#         int1 <- tie
+#         remaining_n <- (ties_n -1)/2
+#         from <- int1 - remaining_n
+#         to <- int1 + remaining_n
+#         original_ranks <- c(from:to)
+#       }
+#
+#       # assign original ranks back to genes based on the sum of log(pvalues) from 2 latest timepoints
+#
+#       # ties_df$rank_log_pvalue_sum_late <- ties_df$rank_log_pvalue_sum_presymptomatic + ties_df$rank_log_pvalue_sum_symptomatic
+#       ties_df <- ties_df %>% arrange(desc(rank_sum_last))
+#       ties_df$final_rank <- rev(original_ranks)
+#       return(ties_df)
+#     }
+#   }
+#
+#   full_df_final <-  bind_rows(sapply(unique(combn_rank_merged$final_rank),
+#                                      FUN = resolve_ties,
+#                                      simplify = FALSE))
+#
+#   full_df_final <- full_df_final %>% arrange(desc(final_rank))
+#
+#   return(full_df_final)
+#
+#
+# }
+#
+
+
+
+# get node and edgelists for plotting modules in gephi
+
+
+get_igraph_for_wgcna_network <- function(norm.counts, thr){
+
+  soft_thr <- thr
+
+  adj <- adjacency(datExpr = norm.counts, type = "signed hybrid", power = soft_thr)
+
+  # transform the adjacency into Topological Overlap Matrix, and calculate the corresponding dissimilarity
+  TOM <- TOMsimilarity(adj, TOMType = "signed")
+  dissTOM <- 1-TOM
+
+  diss_TOM_igraph <- graph_from_adjacency_matrix(dissTOM, mode = "undirected", weighted = TRUE)
+  diss_TOM_igraph <- diss_TOM_igraph %>% set_vertex_attr(name = "ensembl_gene_id", value = colnames(norm.counts))
+  diss_TOM_igraph
+}
+
+
+
+##########################################################
+
+
+get_node_and_edgelist_for_module <- function(ig, genes_df, module_name){
+
+  genes_df = genes_df %>% filter(module == module_name) %>%
+    mutate(geneID = case_when(!is.na(gene_symbol) ~ gene_symbol,
+                              TRUE ~ ensembl_gene_id))
+
+  module_size <- nrow(genes_df)
+
+
+  all_in_module <- genes_df$ensembl_gene_id
+  module_graph <- subgraph(ig, V(ig)[colnames(norm.counts) %in% all_in_module])
+  module_graph_mst <- mst(module_graph)
+
+  # reoder rows in vtx_atrrs dataframe so that they will match the order of vertices in igraph object
+
+  geneID_igraph <- get.vertex.attribute(module_graph_mst, name = "ensembl_gene_id")
+
+  genes_df <- genes_df[match(geneID_igraph, genes_df$ensembl_gene_id), ]
+
+  nodelist <- genes_df
+  rownames(nodelist) <- V(module_graph_mst)
+  nodelist <- nodelist %>% rownames_to_column("Id") %>%
+    arrange(MM.pval) %>%
+    mutate(
+      is.hub = row_number() <= 20
+    ) %>%
+    mutate(
+      Label = case_when(is.hub == TRUE ~ geneID,
+                            TRUE ~ "")
+    ) %>%
+    mutate(hub_rank = case_when(is.hub == TRUE ~ 2,
+                                TRUE ~ 1)) %>%
+    mutate(log.MM = -log10(MM.pval))
+
+
+  # add random hub ranks (this is important for plotting in Gephi)
+   set.seed(123435)
+   hubs_random_ranks <- sample(c((module_size - 19):module_size), size = 20, replace = FALSE)
+   ranks_nh <- c(1:c(module_size - 20))
+   set.seed(123435)
+   nonhubs_random_ranks <- sample(ranks_nh, size = length(ranks_nh), replace = FALSE)
+
+
+   nodelist$random_ranks <- c(hubs_random_ranks, nonhubs_random_ranks)
+
+
+
+  edgelist <- as.data.frame(as_edgelist(module_graph_mst)) %>% dplyr::rename(Source = V1, Target = V2)
+
+  return(list("nodelist" = nodelist,
+              "edgelist" = edgelist))
+
+}
+
+
+get_files_for_gephi <- function(norm.counts, thr, genes_df, module_name, nodelist_f, edgelist_f, overwrite = FALSE){
+
+
+  if(file.exists(nodelist_f) & file.exists(edgelist_f) & overwrite == FALSE){
+    edges = read.csv(edgelist_f)
+    nodes = read.csv(nodelist_f)
+
+    return(list("nodelist" = nodes, "edgelist" = edges))
+  }else{
+
+    # get graph
+    gr = get_igraph_for_wgcna_network(norm.counts, thr = thr)
+
+    # get node and edgelist
+    ne = get_node_and_edgelist_for_module(ig = gr, genes_df = genes_df, module_name = module_name)
+
+    write_excel_csv(ne[["nodelist"]], nodelist_f)
+    write_excel_csv(ne[["edgelist"]], edgelist_f)
+
+    return(ne)
+
+
+  }
+
+
+}
+
+
+
+
+
+
+
 
 
 
@@ -1134,323 +1520,323 @@ get_module_pres <- function(b1_input, b2_input, b1_modules, out_dir, file.prefix
 
 
 #############################################
-
-
-make_wgcna_deseq2_info_df <- function(deseq2_results, norm.counts, moduleColors){
-
-  gene_module_assignment <- data.frame(geneID = colnames(norm.counts),
-                                       module = moduleColors)
-
-  get_module_gene_pvalues <- function(time){
-
-    de <- deseq2_results %>% filter(timepoint == time) %>% dplyr::select(geneID, pvalue, timepoint, log2FoldChange, gene_name)
-
-    de_m  <- merge(gene_module_assignment, de, by = "geneID", all.x = TRUE) %>%
-      drop_na(pvalue)  %>% # remove genes which don't have corresponding p-values
-      mutate(log_pvalue = -log10(pvalue))
-
-    de_m
-
-  }
-
-  genes_modules_pvals <- sapply(X = unique(deseq2_results$timepoint),
-                                FUN = get_module_gene_pvalues,
-                                simplify = FALSE,
-                                USE.NAMES = TRUE)
-
-  return(bind_rows(genes_modules_pvals))
-
-
-}
+#
+#
+# make_wgcna_deseq2_info_df <- function(deseq2_results, norm.counts, moduleColors){
+#
+#   gene_module_assignment <- data.frame(geneID = colnames(norm.counts),
+#                                        module = moduleColors)
+#
+#   get_module_gene_pvalues <- function(time){
+#
+#     de <- deseq2_results %>% filter(timepoint == time) %>% dplyr::select(geneID, pvalue, timepoint, log2FoldChange, gene_name)
+#
+#     de_m  <- merge(gene_module_assignment, de, by = "geneID", all.x = TRUE) %>%
+#       drop_na(pvalue)  %>% # remove genes which don't have corresponding p-values
+#       mutate(log_pvalue = -log10(pvalue))
+#
+#     de_m
+#
+#   }
+#
+#   genes_modules_pvals <- sapply(X = unique(deseq2_results$timepoint),
+#                                 FUN = get_module_gene_pvalues,
+#                                 simplify = FALSE,
+#                                 USE.NAMES = TRUE)
+#
+#   return(bind_rows(genes_modules_pvals))
+#
+#
+# }
 
 
 ###############################################
 
-
-get_moduleMembership <- function(MEs_df, norm.counts, moduleColors){
-
-  gene_module_assignment <- data.frame(geneID = colnames(norm.counts),
-                                       module = moduleColors)
-
-  module.membership.measure <- cor(MEs_df, norm.counts, use = 'p')
-  module.membership.measure.pvals <- corPvalueStudent(module.membership.measure, nrow(norm.counts))
-
-  # order the genes based on module membership for each module
-
-  order_by_module_membership <- function(module_name){
-
-    module_genes <- gene_module_assignment %>% filter(module == gsub("ME",  "", module_name)) %>% dplyr::select(geneID) %>%
-flatten_chr()
-
-    all_genes <- module.membership.measure.pvals[module_name, ]
-    all_genes <- sort(all_genes)
-    all_gene_symbols <- mapIds(org.Mm.eg.db, keys = names(all_genes), keytype = "ENSEMBL", "SYMBOL")
-
-    all_genes_ordered_df <- data.frame(geneID = names(all_genes),
-                                       pval = all_genes,
-                                       geneSymbol = all_gene_symbols,
-                                       module = module_name) %>%
-      mutate(is.module.gene = case_when(geneID %in% module_genes ~ TRUE,
-                                        TRUE ~ FALSE))
-
-    all_genes_ordered_df
-
-  }
-
-  modules_all_hubs <- sapply(X = rownames(module.membership.measure.pvals),
-                             FUN = order_by_module_membership,
-                             simplify = FALSE,
-                             USE.NAMES = TRUE)
-
-  # merge MM values for all modules
-
-  modules_all_hubs_merged <- bind_rows(modules_all_hubs) %>% filter(is.module.gene == TRUE) %>% dplyr::rename(MM.pval = pval) %>%
-dplyr::select(geneID, MM.pval)
-  modules_all_hubs_merged
-}
-
-
-#########################################
-
-
-merge_deseq2_pvals_and_MM <- function(pvals, MMs){
-
-  merge(pvals, MMs, by = "geneID", all.x = TRUE) %>%
-    mutate(log_MMpval = -log10(MM.pval))
-
-}
+#
+# get_moduleMembership <- function(MEs_df, norm.counts, moduleColors){
+#
+#   gene_module_assignment <- data.frame(geneID = colnames(norm.counts),
+#                                        module = moduleColors)
+#
+#   module.membership.measure <- cor(MEs_df, norm.counts, use = 'p')
+#   module.membership.measure.pvals <- corPvalueStudent(module.membership.measure, nrow(norm.counts))
+#
+#   # order the genes based on module membership for each module
+#
+#   order_by_module_membership <- function(module_name){
+#
+#     module_genes <- gene_module_assignment %>% filter(module == gsub("ME",  "", module_name)) %>% dplyr::select(geneID) %>%
+# flatten_chr()
+#
+#     all_genes <- module.membership.measure.pvals[module_name, ]
+#     all_genes <- sort(all_genes)
+#     all_gene_symbols <- mapIds(org.Mm.eg.db, keys = names(all_genes), keytype = "ENSEMBL", "SYMBOL")
+#
+#     all_genes_ordered_df <- data.frame(geneID = names(all_genes),
+#                                        pval = all_genes,
+#                                        geneSymbol = all_gene_symbols,
+#                                        module = module_name) %>%
+#       mutate(is.module.gene = case_when(geneID %in% module_genes ~ TRUE,
+#                                         TRUE ~ FALSE))
+#
+#     all_genes_ordered_df
+#
+#   }
+#
+#   modules_all_hubs <- sapply(X = rownames(module.membership.measure.pvals),
+#                              FUN = order_by_module_membership,
+#                              simplify = FALSE,
+#                              USE.NAMES = TRUE)
+#
+#   # merge MM values for all modules
+#
+#   modules_all_hubs_merged <- bind_rows(modules_all_hubs) %>% filter(is.module.gene == TRUE) %>% dplyr::rename(MM.pval = pval) %>%
+# dplyr::select(geneID, MM.pval)
+#   modules_all_hubs_merged
+# }
+#
+#
+# #########################################
+#
+#
+# merge_deseq2_pvals_and_MM <- function(pvals, MMs){
+#
+#   merge(pvals, MMs, by = "geneID", all.x = TRUE) %>%
+#     mutate(log_MMpval = -log10(MM.pval))
+#
+# }
 
 
 ##########################################
 
-
-combined_MM_pval_rank <- function(df, hub_number){ # hub_number = final number of hub genes
-
-  # check whether genes in the module are predominantly up or down-regulated
-
-  direction_count <- table(df$log2FoldChange > 0)
-  if(direction_count[2] > direction_count[1]){
-    direction <- "Upregulated"
-  }else{
-    direction <- "Downregulated"
-  }
-
-  direction_options <- c("Upregulated", "Downregulated")
-
-  # get number of genes in module
-
-  module_gene_n <- length(unique(df$geneID))
-
-
-  # restructure the dataframe so that p-values and L2fc values for each timepoints will be columns
-  restructure <- function(time){
-    one_tp <- df %>% filter(timepoint == time)
-
-    one_tp <-  one_tp %>%
-      replace_na(list(gene_name = "",
-                      pvalue = 1,
-                      timepoint = unique(one_tp$timepoint),
-                      log_pvalue = 0)) %>%
-      dplyr::select(-timepoint)
-
-
-    colnames(one_tp)[c(3,4,6)] <- paste(colnames(one_tp)[c(3,4,6)], time, sep = "_")
-
-    one_tp
-
-  }
-
-  df_restructured_per_tp <- sapply(unique(df$timepoint),
-                                   FUN = restructure,
-                                   simplify = FALSE,
-                                   USE.NAMES = TRUE)
-
-  df_restructured_per_tp_gene_n <- sapply(df_restructured_per_tp, FUN = function(x){length(unique(x$geneID))}, simplify = TRUE)
-  names(df_restructured_per_tp_gene_n) <- 1:length(unique(df$timepoint))
-
-  # reorder df_restructured_per_tp so that the df which has all the genes in the modules goes into merging first
-
-  order <- as.numeric(names(sort(df_restructured_per_tp_gene_n, decreasing = TRUE)))
-
-  df_restructured_per_tp <- df_restructured_per_tp[order]
-
-
-  df_restructured <- Reduce(left_join, df_restructured_per_tp)
-
-  # caluclate sum of all pvalues for all timepoints in individual time stages
-
-  early_timepoints <- c("4", "8")
-  presymptomatic_timepoints <- c("12", "14", "16")
-  symptomatic_timepoints <- c("18", "20", "term")
-
-  all_timepoints_found <- unique(df$timepoint)
-
-  early_timpoints_found <- early_timepoints[early_timepoints %in% all_timepoints_found]
-  presymptomatic_timepoints_found <- presymptomatic_timepoints[presymptomatic_timepoints %in% all_timepoints_found]
-  symptomatic_timepoints_found <- symptomatic_timepoints[symptomatic_timepoints %in% all_timepoints_found]
-
-  # sum log_values if the gene has a fold change that matched direction, if not subtract log_pval
-
-  get_timestage_score <- function(gene, tps){
-
-    print(gene)
-   pattern <- paste(paste0("_", tps), collapse = "|")
-   cols <- colnames(df_restructured)[grepl(pattern, colnames(df_restructured))]
-   log2fc_cols <- cols[grepl("log2FoldChange", cols)]
-   logPval_cols <- cols[grepl("log_pvalue", cols)]
-
-   df_restructured_fcs <- as.double(df_restructured %>% filter(geneID  == gene) %>% dplyr::select(all_of(log2fc_cols)))
-   fcs_type <- sapply(df_restructured_fcs, FUN = function(x){
-
-    if(is.na(x)){
-      x <- 0
-    }
-
-     if(x == 0){
-       return(direction_options[which(direction_options != direction)])
-     }else if(x < 0){
-       return("Downregulated")
-     }else{
-       return("Upregulated")
-     }
-   })
-
-   fcs_direction_match <- fcs_type == direction
-   df_restructured_log_pvals <- as.double(df_restructured %>% filter(geneID == gene) %>% dplyr::select(all_of(logPval_cols)))
-
-   if(any(is.na(df_restructured_log_pvals)) == 1){
-     df_restructured_log_pvals[which(is.na(df_restructured_log_pvals))] <- 0
-   }
-
-   for(i in 1:length(df_restructured_log_pvals)){
-     if(fcs_direction_match[i]  == 0){
-       df_restructured_log_pvals[i] <- -df_restructured_log_pvals[i]
-     }
-   }
-
-   final_sum <- sum(df_restructured_log_pvals)
-   final_sum
-
-  }
-
-
-  # df_restructured <- df_restructured %>% filter(geneID %in% final_genes)
-  df_restructured$log_pvalue_sum_early <- sapply(unique(df_restructured$geneID),
-                                                 FUN = get_timestage_score,
-                                                 tps = early_timpoints_found)
-
-  df_restructured$log_pvalue_sum_presymptomatic <- sapply(unique(df_restructured$geneID),
-                                                                 FUN = get_timestage_score,
-                                                                 tps = presymptomatic_timepoints_found)
-
-  df_restructured$log_pvalue_sum_symptomatic <- sapply(unique(df_restructured$geneID),
-                                                       FUN = get_timestage_score,
-                                                       tps = symptomatic_timepoints_found)
-
-
-
-# get the sum of the 1st 2 time stages and sum of last 2 time stages and multiply them
-
-  # sum1 <- df_restructured$log_pvalue_sum_presymptomatic + df_restructured$log_pvalue_sum_early
-  # sum2 <- df_restructured$log_pvalue_sum_presymptomatic + df_restructured$log_pvalue_sum_symptomatic
-  # final_significance_score <- sum1*sum2
-  # df_restructured$log_final_significance_score <- final_significance_score
-  #
-
-  # select all columns that need to  be ranked
-
-  cols_to_rank <- df_restructured %>% dplyr::select(all_of(c(colnames(df_restructured)[grepl("^log_.*",
-colnames(df_restructured))])))
-  ranked_cols <- as.data.frame(apply(cols_to_rank, MARGIN = 2, FUN = rank, simplify = TRUE))
-  colnames(ranked_cols) <- paste("rank", colnames(ranked_cols), sep = "_")
-
-  # sum the ranks for gene significance at individual time stages
-
-  gene_significance_rank_sum <- ranked_cols$rank_log_pvalue_sum_early + ranked_cols$rank_log_pvalue_sum_presymptomatic +
-ranked_cols$rank_log_pvalue_sum_symptomatic
-  gene_significance_rank_sum_rank <- rank(gene_significance_rank_sum)
-
-  full_df <- cbind(df_restructured, ranked_cols)
-  full_df$gene_significance_rank_sum <- gene_significance_rank_sum
-  full_df$gene_significance_rank_sum_rank <- gene_significance_rank_sum_rank
-
-  # resolve ties
-
-  # get all tied ranks
-
-  tied_ranks <- gene_significance_rank_sum_rank[duplicated(gene_significance_rank_sum_rank)]
-
-  resolve_ties <- function(tie){
-    ties_df <- full_df %>% filter(gene_significance_rank_sum_rank == tie)
-    ties_df$rank_log_pvalue_sum_late <- ties_df$rank_log_pvalue_sum_presymptomatic + ties_df$rank_log_pvalue_sum_symptomatic
-    if(nrow(ties_df) == 1){
-
-      return(ties_df)
-    }else{
-
-    # get original ranks
-    ties_n <- nrow(ties_df)
-
-    if(ties_n %% 2 == 0){ # if ties_n is an odd number
-      # get 2 closes integers to a tie
-      int1 <- floor(tie)
-      int2 <- ceiling(tie)
-      # get the number of remaining integers in each direction
-      remaining_n <- (ties_n - 2)/2
-      from <- int1 - remaining_n
-      to <- int2 + remaining_n
-      original_ranks <- c(from:to)
-    }else{
-      int1 <- tie
-      remaining_n <- (ties_n -1)/2
-      from <- int1 - remaining_n
-      to <- int1 + remaining_n
-      original_ranks <- c(from:to)
-    }
-
-    # assign original ranks back to genes based on the sum of log(pvalues) from 2 latest timepoints
-
-    # ties_df$rank_log_pvalue_sum_late <- ties_df$rank_log_pvalue_sum_presymptomatic + ties_df$rank_log_pvalue_sum_symptomatic
-    ties_df <- ties_df %>% arrange(desc(rank_log_pvalue_sum_late))
-    ties_df$gene_significance_rank_sum_rank <- rev(original_ranks)
-    return(ties_df)
-    }
-  }
-
- full_df_final <-  bind_rows(sapply(unique(full_df$gene_significance_rank_sum_rank),
-         FUN = resolve_ties,
-         simplify = FALSE))
-
- full_df_final <- full_df_final %>% arrange(desc(gene_significance_rank_sum_rank))
-
- # total_combined_score <- mean(gene_significance_rank_sum_rank, ranked_cols$rank_log_MMpval)
- # total_combined_score <- ranked_cols$rank_log_pvalue_sum_early + ranked_cols$rank_log_pvalue_sum_presymptomatic +
-ranked_cols$rank_log_pvalue_sum_symptomatic + ranked_cols$rank_log_MMpval
-
- # total_combined_score <- ranked_cols$rank_log_final_significance_score + ranked_cols$rank_log_MMpval
-
-  # append individual and combined ranks back to original dataframe
+#
+# combined_MM_pval_rank <- function(df, hub_number){ # hub_number = final number of hub genes
+#
+#   # check whether genes in the module are predominantly up or down-regulated
+#
+#   direction_count <- table(df$log2FoldChange > 0)
+#   if(direction_count[2] > direction_count[1]){
+#     direction <- "Upregulated"
+#   }else{
+#     direction <- "Downregulated"
+#   }
+#
+#   direction_options <- c("Upregulated", "Downregulated")
+#
+#   # get number of genes in module
+#
+#   module_gene_n <- length(unique(df$geneID))
+#
+#
+#   # restructure the dataframe so that p-values and L2fc values for each timepoints will be columns
+#   restructure <- function(time){
+#     one_tp <- df %>% filter(timepoint == time)
+#
+#     one_tp <-  one_tp %>%
+#       replace_na(list(gene_name = "",
+#                       pvalue = 1,
+#                       timepoint = unique(one_tp$timepoint),
+#                       log_pvalue = 0)) %>%
+#       dplyr::select(-timepoint)
+#
+#
+#     colnames(one_tp)[c(3,4,6)] <- paste(colnames(one_tp)[c(3,4,6)], time, sep = "_")
+#
+#     one_tp
+#
+#   }
+#
+#   df_restructured_per_tp <- sapply(unique(df$timepoint),
+#                                    FUN = restructure,
+#                                    simplify = FALSE,
+#                                    USE.NAMES = TRUE)
+#
+#   df_restructured_per_tp_gene_n <- sapply(df_restructured_per_tp, FUN = function(x){length(unique(x$geneID))}, simplify = TRUE)
+#   names(df_restructured_per_tp_gene_n) <- 1:length(unique(df$timepoint))
+#
+#   # reorder df_restructured_per_tp so that the df which has all the genes in the modules goes into merging first
+#
+#   order <- as.numeric(names(sort(df_restructured_per_tp_gene_n, decreasing = TRUE)))
+#
+#   df_restructured_per_tp <- df_restructured_per_tp[order]
+#
+#
+#   df_restructured <- Reduce(left_join, df_restructured_per_tp)
+#
+#   # caluclate sum of all pvalues for all timepoints in individual time stages
+#
+#   early_timepoints <- c("4", "8")
+#   presymptomatic_timepoints <- c("12", "14", "16")
+#   symptomatic_timepoints <- c("18", "20", "term")
+#
+#   all_timepoints_found <- unique(df$timepoint)
+#
+#   early_timpoints_found <- early_timepoints[early_timepoints %in% all_timepoints_found]
+#   presymptomatic_timepoints_found <- presymptomatic_timepoints[presymptomatic_timepoints %in% all_timepoints_found]
+#   symptomatic_timepoints_found <- symptomatic_timepoints[symptomatic_timepoints %in% all_timepoints_found]
+#
+#   # sum log_values if the gene has a fold change that matched direction, if not subtract log_pval
+#
+#   get_timestage_score <- function(gene, tps){
+#
+#     print(gene)
+#    pattern <- paste(paste0("_", tps), collapse = "|")
+#    cols <- colnames(df_restructured)[grepl(pattern, colnames(df_restructured))]
+#    log2fc_cols <- cols[grepl("log2FoldChange", cols)]
+#    logPval_cols <- cols[grepl("log_pvalue", cols)]
+#
+#    df_restructured_fcs <- as.double(df_restructured %>% filter(geneID  == gene) %>% dplyr::select(all_of(log2fc_cols)))
+#    fcs_type <- sapply(df_restructured_fcs, FUN = function(x){
+#
+#     if(is.na(x)){
+#       x <- 0
+#     }
+#
+#      if(x == 0){
+#        return(direction_options[which(direction_options != direction)])
+#      }else if(x < 0){
+#        return("Downregulated")
+#      }else{
+#        return("Upregulated")
+#      }
+#    })
+#
+#    fcs_direction_match <- fcs_type == direction
+#    df_restructured_log_pvals <- as.double(df_restructured %>% filter(geneID == gene) %>% dplyr::select(all_of(logPval_cols)))
+#
+#    if(any(is.na(df_restructured_log_pvals)) == 1){
+#      df_restructured_log_pvals[which(is.na(df_restructured_log_pvals))] <- 0
+#    }
+#
+#    for(i in 1:length(df_restructured_log_pvals)){
+#      if(fcs_direction_match[i]  == 0){
+#        df_restructured_log_pvals[i] <- -df_restructured_log_pvals[i]
+#      }
+#    }
+#
+#    final_sum <- sum(df_restructured_log_pvals)
+#    final_sum
+#
+#   }
+#
+#
+#   # df_restructured <- df_restructured %>% filter(geneID %in% final_genes)
+#   df_restructured$log_pvalue_sum_early <- sapply(unique(df_restructured$geneID),
+#                                                  FUN = get_timestage_score,
+#                                                  tps = early_timpoints_found)
+#
+#   df_restructured$log_pvalue_sum_presymptomatic <- sapply(unique(df_restructured$geneID),
+#                                                                  FUN = get_timestage_score,
+#                                                                  tps = presymptomatic_timepoints_found)
+#
+#   df_restructured$log_pvalue_sum_symptomatic <- sapply(unique(df_restructured$geneID),
+#                                                        FUN = get_timestage_score,
+#                                                        tps = symptomatic_timepoints_found)
+#
+#
+#
+# # get the sum of the 1st 2 time stages and sum of last 2 time stages and multiply them
+#
+#   # sum1 <- df_restructured$log_pvalue_sum_presymptomatic + df_restructured$log_pvalue_sum_early
+#   # sum2 <- df_restructured$log_pvalue_sum_presymptomatic + df_restructured$log_pvalue_sum_symptomatic
+#   # final_significance_score <- sum1*sum2
+#   # df_restructured$log_final_significance_score <- final_significance_score
+#   #
+#
+#   # select all columns that need to  be ranked
+#
+#   cols_to_rank <- df_restructured %>% dplyr::select(all_of(c(colnames(df_restructured)[grepl("^log_.*",
+# colnames(df_restructured))])))
+#   ranked_cols <- as.data.frame(apply(cols_to_rank, MARGIN = 2, FUN = rank, simplify = TRUE))
+#   colnames(ranked_cols) <- paste("rank", colnames(ranked_cols), sep = "_")
+#
+#   # sum the ranks for gene significance at individual time stages
+#
+#   gene_significance_rank_sum <- ranked_cols$rank_log_pvalue_sum_early + ranked_cols$rank_log_pvalue_sum_presymptomatic +
+# ranked_cols$rank_log_pvalue_sum_symptomatic
+#   gene_significance_rank_sum_rank <- rank(gene_significance_rank_sum)
 #
 #   full_df <- cbind(df_restructured, ranked_cols)
-#  full_df$gene_significance_rank_sum <- gene_significance_rank_sum
-# full_df$gene_significance_rank_sum_rank <- gene_significance_rank_sum_rank
-#   #full_df <- full_df %>% rowwise() %>% mutate(final_combined_score = mean(gene_significance_rank_sum_rank, rank_log_MMpval))
-#   #full_df$final_combined_score <- total_combined_score
-#   full_df <- full_df %>% arrange(desc(gene_significance_rank_sum_rank))
-
-  hubs <- full_df_final$geneID[1:hub_number]
-  hubSymbols <- full_df_final$gene_name[1:hub_number]
-  full_df_final <- full_df_final %>% mutate(is.hub = case_when(geneID %in% hubs ~ TRUE,
-                                                   TRUE ~ FALSE))
-
-  n_empty <-  nrow(full_df_final) - hub_number
-  full_df_final$hubLabel <- c(hubSymbols, rep("", n_empty))
-
-  full_df_final
-
-
-
-}
+#   full_df$gene_significance_rank_sum <- gene_significance_rank_sum
+#   full_df$gene_significance_rank_sum_rank <- gene_significance_rank_sum_rank
+#
+#   # resolve ties
+#
+#   # get all tied ranks
+#
+#   tied_ranks <- gene_significance_rank_sum_rank[duplicated(gene_significance_rank_sum_rank)]
+#
+#   resolve_ties <- function(tie){
+#     ties_df <- full_df %>% filter(gene_significance_rank_sum_rank == tie)
+#     ties_df$rank_log_pvalue_sum_late <- ties_df$rank_log_pvalue_sum_presymptomatic + ties_df$rank_log_pvalue_sum_symptomatic
+#     if(nrow(ties_df) == 1){
+#
+#       return(ties_df)
+#     }else{
+#
+#     # get original ranks
+#     ties_n <- nrow(ties_df)
+#
+#     if(ties_n %% 2 == 0){ # if ties_n is an odd number
+#       # get 2 closes integers to a tie
+#       int1 <- floor(tie)
+#       int2 <- ceiling(tie)
+#       # get the number of remaining integers in each direction
+#       remaining_n <- (ties_n - 2)/2
+#       from <- int1 - remaining_n
+#       to <- int2 + remaining_n
+#       original_ranks <- c(from:to)
+#     }else{
+#       int1 <- tie
+#       remaining_n <- (ties_n -1)/2
+#       from <- int1 - remaining_n
+#       to <- int1 + remaining_n
+#       original_ranks <- c(from:to)
+#     }
+#
+#     # assign original ranks back to genes based on the sum of log(pvalues) from 2 latest timepoints
+#
+#     # ties_df$rank_log_pvalue_sum_late <- ties_df$rank_log_pvalue_sum_presymptomatic + ties_df$rank_log_pvalue_sum_symptomatic
+#     ties_df <- ties_df %>% arrange(desc(rank_log_pvalue_sum_late))
+#     ties_df$gene_significance_rank_sum_rank <- rev(original_ranks)
+#     return(ties_df)
+#     }
+#   }
+#
+#  full_df_final <-  bind_rows(sapply(unique(full_df$gene_significance_rank_sum_rank),
+#          FUN = resolve_ties,
+#          simplify = FALSE))
+#
+#  full_df_final <- full_df_final %>% arrange(desc(gene_significance_rank_sum_rank))
+#
+#  # total_combined_score <- mean(gene_significance_rank_sum_rank, ranked_cols$rank_log_MMpval)
+#  # total_combined_score <- ranked_cols$rank_log_pvalue_sum_early + ranked_cols$rank_log_pvalue_sum_presymptomatic +
+# ranked_cols$rank_log_pvalue_sum_symptomatic + ranked_cols$rank_log_MMpval
+#
+#  # total_combined_score <- ranked_cols$rank_log_final_significance_score + ranked_cols$rank_log_MMpval
+#
+#   # append individual and combined ranks back to original dataframe
+# #
+# #   full_df <- cbind(df_restructured, ranked_cols)
+# #  full_df$gene_significance_rank_sum <- gene_significance_rank_sum
+# # full_df$gene_significance_rank_sum_rank <- gene_significance_rank_sum_rank
+# #   #full_df <- full_df %>% rowwise() %>% mutate(final_combined_score = mean(gene_significance_rank_sum_rank, rank_log_MMpval))
+# #   #full_df$final_combined_score <- total_combined_score
+# #   full_df <- full_df %>% arrange(desc(gene_significance_rank_sum_rank))
+#
+#   hubs <- full_df_final$geneID[1:hub_number]
+#   hubSymbols <- full_df_final$gene_name[1:hub_number]
+#   full_df_final <- full_df_final %>% mutate(is.hub = case_when(geneID %in% hubs ~ TRUE,
+#                                                    TRUE ~ FALSE))
+#
+#   n_empty <-  nrow(full_df_final) - hub_number
+#   full_df_final$hubLabel <- c(hubSymbols, rep("", n_empty))
+#
+#   full_df_final
+#
+#
+#
+# }
 
 
 ##############################################################
