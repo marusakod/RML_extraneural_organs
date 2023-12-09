@@ -1062,6 +1062,78 @@ make_b1_b1_MM_corr_plot <- function(df, x, y, hubx, huby, module_name){
 }
 
 
+
+# boxplots with MEs
+
+make_disease_stage_boxplots_for_modules <- function(Module, MEs_w_meta, ME_signif){
+
+
+  module_column <- paste0("ME", Module)
+  # for each disease stage group determine what is the maximum ME value
+
+  max_y <- MEs_w_meta %>%
+    dplyr::select(all_of(module_column), stage) %>%
+    group_by(stage) %>%
+    summarise(max = max(get(module_column)))
+
+  final_y <- max_y$max + 0.025
+
+
+  lines <- tibble(stage = c("early", "presymptomatic", "symptomatic"),
+                  x = c(1, 1, 1),
+                  xend = c(2, 2, 2),
+                  y = final_y,
+                  yend = y)
+
+
+  stars <- ME_signif %>% filter(module == Module) %>% dplyr::select(stage, signif_label)
+  stars <- stars[match(max_y$stage, stars$stage), ]
+  stars$x <- c(1.5, 1.5, 1.5)
+  stars$y <- final_y + 0.025
+  stars$stage <- as.character(stars$stage)
+
+
+  ggplot(MEs_w_meta, aes(x = Treatment, y = get(module_column))) +
+    # geom_rect(aes(fill = panel_color), xmin = -Inf,xmax = Inf,
+    #           ymin = -Inf,ymax = Inf,alpha = 0.1) +
+    scale_fill_manual(values = c("white", "#E48016"), breaks = c("middle", "outer"), guide = "none") +
+    new_scale_fill() +
+    stat_boxplot(geom = "errorbar", linetype = 1, width = 0.4, color = "#616A6B")+
+    geom_boxplot(aes(fill = Treatment), notch = FALSE, outlier.size = 0, outlier.colour = "white", color = "#616A6B", width = 0.4) +
+    scale_fill_manual(values = c("#D7DBDD", "#E48016"), breaks = c("NBH", "RML6")) +
+
+    geom_jitter(aes(group = Treatment), size = 0.5, color = "black", width = 0.1, height = 0) +
+    theme_light() +
+    facet_wrap(~stage, scales = "fixed", strip.position = "top", ncol = 1) +
+    labs(x = NULL, y = "Module eigengene", title = paste(gsub("ME", "", module_column), "module", sep = " "), fill = NULL) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks.length.y = unit(0, "mm"),
+          legend.position = "none",
+
+          #legend.direction = "horizontal",
+          legend.text = element_text(size = 9),
+          strip.text = element_text(colour = "black", size = 8),
+
+          strip.background = element_rect(fill = "white", color = "#B3B3B3"),
+          panel.spacing = unit(0, "mm"),
+          panel.background = element_rect(fill = "white", color = "#B3B3B3"),
+          plot.title = element_text(size = 8, face = "bold.italic"),
+          axis.title = element_text(size = 8),
+          axis.text.x = element_text(size = 8)) +
+
+    geom_segment(data = lines, aes(x = x, xend = xend, y = y, yend = yend), inherit.aes = FALSE, color = "#220303") +
+
+    geom_text(data = stars, aes(x = x, y = y, label = signif_label, angle = -90), inherit.aes = FALSE) +
+
+    coord_flip()
+
+
+}
+
+
+
 #
 # make_b1_b1_rank_corr_plot <- function(df, x, y, hubx, huby, module_name){
 #

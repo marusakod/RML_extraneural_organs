@@ -176,6 +176,13 @@ ME_signif_heatmaps_leg <- lapply(all_ME_signif, FUN = make_ME_signif_heatmap, le
 
 ```
 
+```{r get_ME_signif_boxplots}
+ME_signif_box_orange = make_disease_stage_boxplots_for_modules(Module = 'orange', MEs_w_meta = meta_w_MEs$muscle, ME_signif = all_ME_signif$muscle)
+ME_signif_box_darkgeen = make_disease_stage_boxplots_for_modules(Module = 'darkgreen', MEs_w_meta = meta_w_MEs$muscle, ME_signif = all_ME_signif$muscle) 
+
+```
+
+
 
 ```{r get_hubs}
 # get module membership for muscle darkgreen and orange module
@@ -278,6 +285,11 @@ mapply(l = all_legends, f_prefix = c('blood', 'muscle_bacth1', 'spleen'),
          ggsave(file.path(out_dir, paste0(f_prefix, '_ME_signif_heat_legend.svg')), 
                 l, width = 1, height = 3)
        }, SIMPLIFY = FALSE)
+
+
+# ME signif boxplots
+ggsave(file.path(out_dir, 'orange_ME_signif_boxplot.svg'), ME_signif_box_orange, width = 1.6, height = 3.3)
+ggsave(file.path(out_dir, 'darkgeen_ME_signif_boxplot.svg'), ME_signif_box_darkgeen, width =1.6 , height = 3.3)
 
 
 # MM and GS correlation plots

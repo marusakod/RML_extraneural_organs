@@ -49,7 +49,10 @@ b1_hub_stats <- read.csv('output/wgcna/orange_darkgreen_MM_GS.csv')
 
 
 ```{r output}
+out_dir = 'output/wgcna'
 module_preservation_plot <- 'output/wgcna/muscle_b2b1_module_pres_plot.svg'
+
+b1_b2_hub_stats_f = 'output/wgcna/muscle_b1_b1_hub_stats.csv'
 ```
 
 
@@ -172,6 +175,12 @@ b2_ME_signif_heat_no_leg <- make_ME_signif_heatmap(b2_ME_signif, legend = 'none'
 b2_ME_signif_leg <- make_ME_signif_heatmap(b2_ME_signif, legend = 'inplot')
 ```
 
+```{r get_ME_box_for_b2}
+b2_ME_signif_box_orange = make_disease_stage_boxplots_for_modules(Module = 'orange', MEs_w_meta = b2_meta_w_MEs, ME_signif = b2_ME_signif)
+b2_ME_signif_box_darkgreen = make_disease_stage_boxplots_for_modules(Module = 'darkgreen', MEs_w_meta = b2_meta_w_MEs, ME_signif = b2_ME_signif)
+```
+
+
 ```{r get_hubs}
 
 m_b2_MMs = get_moduleMembership(module_df = b1_wgcna_module_df, 
@@ -288,11 +297,25 @@ ggsave(file.path('output/wgcna',
       width = 1, height = 3)
 
 
+
+# module significance boxplots
+ggsave(file.path(out_dir, 'b2_orange_ME_signif_boxplot.svg'), b2_ME_signif_box_orange, width = 1.6, height = 3.3)
+ggsave(file.path(out_dir, 'b2_darkgeen_ME_signif_boxplot.svg'), b2_ME_signif_box_darkgreen, width = 1.6 , height = 3.3)
+
+
 # MM correlations b1 and b2
 ggsave(file.path(out_dir, "orange_b1_b2_MM_corr_plot.svg"), MM_corr_orange_p, width = 2.5, height = 2.5)
 ggsave(file.path(out_dir, "darkgreen_b1_b2_MM_corr_plot.svg"), MM_corr_darkgreen_p, width = 2.5, height = 2.5)
 
 ```
+
+
+```{r write_outputs}
+
+write.csv(m_b1_b2_hub_stats_merged, b1_b2_hub_stats_f, quote = FALSE, row.names = FALSE)
+
+```
+
 
 
 
