@@ -8,6 +8,7 @@ output: html_document
 ```{r setup, include=FALSE}
 library(openxlsx)
 library(ComplexHeatmap)
+library(homologene)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -26,8 +27,8 @@ rownames(CJD_meta) <- CJD_meta$SampleID
 CJD_counts <- as.matrix(readRDS('data/FeatureCounts/CJD_count_mx.rds'))
 
 # get mouse hub genes
-mouse_b1_hubs <- readRDS('output/wgcna/muscle_b1_hub_gene_ranking.rds')
-mouse_b2_hubs <- readRDS('output/wgcna/muscle_b2_hub_gene_ranking.rds')
+mouse_hubs <- read.csv('output/wgcna/muscle_b1_b1_hub_stats.csv')
+
 ```
 
 ```{r outputs}
@@ -88,7 +89,7 @@ cjd_deseq2_res <- get_nice_df_from_dds(cjd_deseq2,
                                        feature_meta = human_feature_meta, 
                                        meta_vars_to_add = NULL,
                                        out_dir = out_dir, fname_prefix = CJD_deseq2_res_file, 
-                                        overwrite = TRUE)
+                                        overwrite = FALSE)
 ```
 
 ```{r make_volcano_plot}
@@ -105,14 +106,23 @@ cjd_deseq2_res_for_volcano$gene_type <- factor(cjd_deseq2_res_for_volcano$gene_t
 cjd_degs_pcoding <- cjd_deseq2_res_for_volcano %>% filter(abs(log2FoldChange) >= 0.5, padj <= 0.05)
 
 # mouse genes (find overlapping hubs between batches and corresponding human symbols)
-orange_human<- intersect(mouse_b1_hubs$orange$hubLabel, mouse_b2_hubs$orange$hubLabel) %>%
-  .[. != ""] %>% toupper() %>% .[!.%in% c("MIR8114", "ADH1")] %>% c(., 'ADH1C')
 
-darkgreen_human <- intersect(mouse_b1_hubs$darkgreen$hubLabel, mouse_b2_hubs$darkgreen$hubLabel) %>%
-  .[. != ""] %>% toupper()
+orange_mouse = mouse_hubs %>% filter(module == 'orange') %>%
+  filter(is.hub_b1_MM == TRUE,  is.hub_b2_MM == TRUE) %>%
+  pull(gene_symbol) %>%
+  mouse2human() %>%
+  pull(humanGene)
+
+darkgreen_mouse = mouse_hubs %>% filter(module == 'darkgreen') %>%
+  filter(is.hub_b1_MM == TRUE, is.hub_b2_MM == TRUE) %>%
+  pull(gene_symbol) %>%
+  mouse2human() %>%
+  pull(humanGene)
+
+
 
 annotated_genes <- cjd_deseq2_res_for_volcano %>%
-  filter(geneSymbol %in% c(orange_human, darkgreen_human)) %>%
+  filter(gene_symbol %in% c(orange_mouse, darkgreen_mouse)) %>%
   mutate(gene_type_binary = case_when(gene_type == "Nonsignificant" ~ "Nonsignificant",
                                       TRUE ~ "Significant"))
 
@@ -120,7 +130,7 @@ upregulated_anno <- annotated_genes %>% filter(gene_type == "Upregulated")
 downregulated_anno <- annotated_genes %>% filter(gene_type == "Downregulated")
 nonsignificant_anno <- annotated_genes %>% filter(gene_type == "Nonsignificant")
 
-annotated_genes_labels <- annotated_genes %>% filter(geneSymbol %in% c("GLUL", "LRRC30"))
+annotated_genes_labels <- annotated_genes %>% filter(gene_type_binary == 'Significant')
 
 volcano_plot <- ggplot(data = cjd_deseq2_res_for_volcano, aes(x = log2FoldChange, y = -log10(padj)))+
   theme_light() +
@@ -142,7 +152,7 @@ volcano_plot <- ggplot(data = cjd_deseq2_res_for_volcano, aes(x = log2FoldChange
        y = bquote(-Log[10]*.("FDR")),
        colour = NULL) +
  theme(legend.text = element_text(size = 8),
-        axis.title = element_text(size = 9),
+        axis.title = element_text(size = 8),
         axis.text = element_text(size = 8),
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
@@ -166,9 +176,10 @@ volcano_plot <- ggplot(data = cjd_deseq2_res_for_volcano, aes(x = log2FoldChange
              colour = "#220303") +
 
      ggrepel::geom_text_repel(data = annotated_genes_labels,
-                    aes(label = geneSymbol, size = gene_type_binary),
+                    aes(label = gene_symbol, size = gene_type_binary),
                     max.overlaps = Inf,
                     colour = "#220303",
+                    fontface = "italic", 
                     min.segment.length = 0.5,
                     show.legend = FALSE) +
 
@@ -244,9 +255,9 @@ print(GLUL_norm_counts_plot)
 
 
 ```{r export_plots}
-ggsave(CJD_pca.plot, CJD_pca_plot_file)
-ggsave(volcano_plot, CJD_volcano_file, width = 3.5, height = 3.7)
-ggsave(GLUL_norm_counts_plot, glul_norm_counts_file, width = 1.45, height = 2 )
+ggsave(CJD_pca_plot_file, CJD_pca.plo)
+ggsave( CJD_volcano_file, volcano_plot,  width = 3.5, height = 3.7)
+ggsave(glul_norm_counts_file, GLUL_norm_counts_plot, width = 1.45, height = 2 )
 
 
 # sample heatmap
