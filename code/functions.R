@@ -1063,6 +1063,36 @@ make_b1_b1_MM_corr_plot <- function(df, x, y, hubx, huby, module_name){
 
 
 
+hub_labels_plot <- function(hub_lbls){
+
+
+  hub_labels_df = data.frame(gene = hub_lbls,
+                              y_pos = seq(0.5, (length(hub_lbls)* 0.5), 0.5),
+                              x_pos = rep(1, length(hub_lbls)))
+
+ ggplot(hub_labels_df, aes(x = x_pos, y = y_pos)) +
+  geom_point(shape = 21,
+             color = "#A569BD",
+             fill = "white",
+             size = 1.5) +
+
+  geom_point(color = "#220303",
+             size = 0.6) +
+
+  theme_void() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        panel.background = element_blank()) +
+  geom_text(aes(label = gene), hjust = -0.5, vjust = 0.5, size = 3, fontface = 'italic')
+
+}
+
+
+
+
 # boxplots with MEs
 
 make_disease_stage_boxplots_for_modules <- function(Module, MEs_w_meta, ME_signif){

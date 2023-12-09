@@ -277,6 +277,11 @@ MM_corr_orange_p = make_b1_b1_MM_corr_plot(m_b1_b2_hub_stats_merged %>% filter(m
 MM_corr_darkgreen_p = make_b1_b1_MM_corr_plot(m_b1_b2_hub_stats_merged %>% filter(module == 'darkgreen'),
                                               x = 'MM.pval', y = 'MM.pval_b2',hubx = 'is.hub_b1_MM', huby = 'is.hub_b2_MM', module_name = 'darkgreen')
 
+orange_hub_overlap = m_b1_b2_hub_stats_merged %>% filter(module == 'orange', is.hub_b1_MM == TRUE , is.hub_b2_MM == TRUE ) %>% pull(gene_symbol)
+darkgreen_hub_overlap = m_b1_b2_hub_stats_merged %>% filter(module == 'darkgreen',  is.hub_b1_MM == TRUE , is.hub_b2_MM == TRUE ) %>% pull(gene_symbol)
+
+orange_hub_labels_plot = hub_labels_plot(orange_hub_overlap)
+darkgreen_hub_labels_plot = hub_labels_plot(darkgreen_hub_overlap)
 
 ```
 
@@ -307,12 +312,17 @@ ggsave(file.path(out_dir, 'b2_darkgeen_ME_signif_boxplot.svg'), b2_ME_signif_box
 ggsave(file.path(out_dir, "orange_b1_b2_MM_corr_plot.svg"), MM_corr_orange_p, width = 2.5, height = 2.5)
 ggsave(file.path(out_dir, "darkgreen_b1_b2_MM_corr_plot.svg"), MM_corr_darkgreen_p, width = 2.5, height = 2.5)
 
+# plot with hub genes overlaps (to be placed next to MM correlations plot)
+ggsave(file.path(out_dir, 'orange_hub_overlap_plot.svg'), orange_hub_labels_plot, width = 2.5, height = 2 )
+ggsave(file.path(out_dir, 'darkgreen_hub_overlap_plot.svg'), darkgreen_hub_labels_plot, width = 2.5 , height = 2)
+
 ```
 
 
 ```{r write_outputs}
 
 write.csv(m_b1_b2_hub_stats_merged, b1_b2_hub_stats_f, quote = FALSE, row.names = FALSE)
+
 
 ```
 
