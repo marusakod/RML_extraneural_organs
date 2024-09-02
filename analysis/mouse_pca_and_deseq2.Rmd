@@ -86,20 +86,6 @@ mouse_feature_meta <- get_feature_data(rownames(all_FC_counts_list[[1]]),
 
 ```{r get_qc_metrics}
 
-# all_lib_complexity <- lapply(all_FC_counts_list,
-#                              FUN = get_library_complexity)
-# 
-# lib_complexity_plots <- lapply(all_lib_complexity, FUN = function(x){
-#   
-#   ggplot(bind_rows(x), aes(fraction_of_genes, fraction_of_counts, group = sample_id, label = sample_id)) +
-#     geom_line(alpha = .2) +
-#     theme_minimal() +
-#     scale_x_sqrt(breaks = c(.01, .05, .1, .2, .5, 1)) +
-#     scale_y_continuous(breaks = seq(0, 1, .2)) +
-#     labs(x = "fraction of genes", y = "fraction of counts") +
-#     theme(legend.position = "none") +
-#     cowplot::theme_cowplot()
-# })
 
 # add qc metrices to metadata
 all_samples_meta_w_qc <- mapply(meta = all_samples_info_split, 
@@ -202,74 +188,6 @@ do.call('grid.arrange', c(stage_pca_plots, ncol = 3, nrow = 3))
 
 ```
 
-
-
-```{r mouse_deseq2_interaction}
-# all_deseq2_interaction <- vector("list", length = 3) %>%
-#   setNames(organs)
-# for(i in organs){
-#   counts <- all_FC_counts_list[[i]]
-#   meta <- all_samples_info_split[[i]]
-#   
-#  all_deseq2_interaction[[i]] <- run_deseq2(counts = counts, 
-#                                            meta = meta, 
-#                                           ctrl_level = 'NBH', 
-#                                           main_var = 'Treatment', 
-#                                           formula = ~stage + Treatment)
-#   
-#   print(paste0('Finished stage deseq2 for ',i))
-# }
-# 
-# # get nice outputs
-# all_deseq2_interaction_nice <- mapply(dds = all_deseq2_interaction,
-#                                   fname_prefix = paste0(organs, '_interaction'), 
-#                                   FUN = get_nice_df_from_dds, 
-#                                   MoreArgs = list(
-#                                   AnnDb_object = org.Mm.eg.db, 
-#                                   meta_vars_to_add = 'Region',  
-#                                   mart_dataset = 'mmusculus_gene_ensembl', 
-#                                   out_dir = out_dir, overwrite = FALSE), SIMPLIFY = FALSE)
-
-```
-
-```{r interaction_volcanos}
-
-# all_deseq2_interaction_nice_merged <- bind_rows(all_deseq2_interaction_nice)
-# 
-# volcano_plot_mouse_interaction <- ggplot(data = all_deseq2_interaction_nice_merged, aes(x = log2FoldChange, y = -log10(padj)))+
-#   theme_light() +
-#   facet_wrap(~Region, scales = 'free', ncol = 1) +
-#   geom_point(aes(colour = gene_type),
-#              alpha = 0.7,
-#              shape = 16,
-#              size = 1) +
-#   geom_hline(yintercept = -log10(0.05),
-#              linetype = "dashed",
-#              color = "#575757",
-#              linewidth = 0.1) +
-#   geom_vline(xintercept = c(-0.5, 0.5),
-#              linetype = "dashed",
-#              color = "#575757",
-#              linewidth = 0.1) +
-#   scale_colour_manual(values =  c("Upregulated" = "#f2968d", "Downregulated" = "#71b7e6", "Nonsignificant" = "lightgrey")) +
-#   guides(colour = guide_legend(override.aes = list(size= 4))) +
-#   labs(x = expression("Log"[2]*" Fold Change"),
-#        y = bquote(-Log[10]*.("FDR")),
-#        colour = NULL) +
-#   
-#   theme(legend.text = element_text(size = 8),
-#         axis.title = element_text(size = 9),
-#         axis.text = element_text(size = 8),
-#         strip.text = element_text(size = 9, color = 'black'), 
-#         strip.background = element_rect(color = 'grey', fill = 'white'), 
-#         panel.grid.major = element_blank(),
-#         panel.grid.minor = element_blank(),
-#         legend.position = "bottom",
-#         legend.direction = "horizontal") 
-# 
-
-
-```
 
 ```{r mouse_deseq2_per_stage}
 all_samples_info_stage_organ_split <- all_samples_info %>%
